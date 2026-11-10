@@ -55,7 +55,8 @@ Future<void> main(List<String> args) async {
 /// On Linux, the libmpv 0.42 built by linux/third_party/build_libmpv.sh and
 /// installed next to the executable. Loading it by path keeps media_kit from
 /// picking up an older system libmpv.so. Null elsewhere, or when the build
-/// uses the system libmpv.
+/// uses the system libmpv. (On macOS media_kit loads Mpv.framework from the
+/// app bundle, where the build has put the 0.42 build; see macos/Podfile.)
 String? bundledLibmpv() {
   if (!Platform.isLinux) return null;
   final path = p.join(p.dirname(Platform.resolvedExecutable), 'lib', 'libmpv.so.2');

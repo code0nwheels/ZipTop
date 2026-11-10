@@ -4,16 +4,27 @@ typedef ProcessRunner = Future<ProcessResult> Function(String executable, List<S
 
 /// Opens the system file manager with [filePath] selected.
 ///
-/// Windows: Explorer. Linux: the freedesktop FileManager1 D-Bus interface
-/// (Nautilus, Dolphin, Nemo, Thunar…), falling back to opening the folder
-/// with `xdg-open` when no file manager answers.
-Future<void> revealInFolder(String filePath, {ProcessRunner run = Process.run}) async {
+/// Windows: Explorer. macOS: Finder. Linux: the freedesktop FileManager1
+/// D-Bus interface (Nautilus, Dolphin, Nemo, Thunar…), falling back to
+/// opening the folder with `xdg-open` when no file manager answers.
+///
+/// [os] is `Platform.operatingSystem`, overridable for tests.
+Future<void> revealInFolder(
+  String filePath, {
+  ProcessRunner run = Process.run,
+  String? os,
+}) async {
+  os ??= Platform.operatingSystem;
   try {
-    if (Platform.isWindows) {
+    if (os == 'windows') {
       await run('explorer.exe', ['/select,', filePath]);
       return;
     }
-    if (!Platform.isLinux) return;
+    if (os == 'macos') {
+      await run('open', ['-R', filePath]);
+      return;
+    }
+    if (os != 'linux') return;
     var shown = false;
     try {
       final result = await run('dbus-send', [

@@ -8,10 +8,17 @@ abstract class TokenStore {
 }
 
 /// Token kept in the OS credential vault (Credential Manager on Windows, the
-/// Secret Service keyring on Linux).
+/// Secret Service keyring on Linux, the login keychain on macOS).
 class SecureTokenStore implements TokenStore {
   SecureTokenStore([FlutterSecureStorage? storage])
-      : _storage = storage ?? const FlutterSecureStorage();
+      : _storage = storage ??
+            const FlutterSecureStorage(
+              // The data protection keychain needs a keychain-access-groups
+              // entitlement and so a provisioning profile, which an ad-hoc
+              // signed build has none of. The legacy login keychain needs
+              // neither; it may ask once to allow access after an update.
+              mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+            );
 
   static const _key = 'jwt_token';
 

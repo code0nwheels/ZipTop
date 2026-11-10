@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  No App Sandbox: ZipTop writes its login item to ~/Library/LaunchAgents,
+  records to any folder the viewer picks, and runs open and hdiutil (Reveal
+  in Finder, self-update). It is not distributed through the App Store.
+-->
+<plist version="1.0">
+<dict>
+</dict>
+</plist>

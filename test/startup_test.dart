@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:ziptop/core/platform/reveal.dart';
 import 'package:ziptop/core/platform/startup.dart';
 import 'package:ziptop/dvr/disk_space.dart';
 import 'package:ziptop/dvr/dvr_service.dart';
@@ -48,6 +49,94 @@ void main() {
     });
   });
 
+  group('LaunchAgentAutostart', () {
+    late Directory home;
+
+    setUp(() async => home = await Directory.systemTemp.createTemp('ziptop_launchagent'));
+    tearDown(() async => home.delete(recursive: true));
+
+    test('writes, reports and removes the launch agent', () async {
+      final agent = LaunchAgentAutostart(
+        home: home.path,
+        executable: '/Applications/ZipTop.app/Contents/MacOS/ZipTop',
+      );
+      final file = File(
+        p.join(home.path, 'Library', 'LaunchAgents', 'com.zipstreams.ziptop.plist'),
+      );
+
+      expect(await agent.isEnabled(), isFalse);
+
+      expect(await agent.setEnabled(true), isTrue);
+      expect(file.existsSync(), isTrue);
+      final plist = file.readAsStringSync();
+      expect(plist, startsWith('<?xml version="1.0" encoding="UTF-8"?>'));
+      expect(plist, contains('<key>Label</key>\n\t<string>com.zipstreams.ziptop</string>'));
+      expect(
+        plist,
+        contains(
+          '<array>\n'
+          '\t\t<string>/Applications/ZipTop.app/Contents/MacOS/ZipTop</string>\n'
+          '\t\t<string>--minimized</string>\n'
+          '\t</array>',
+        ),
+      );
+      expect(plist, contains('<key>RunAtLoad</key>\n\t<true/>'));
+      expect(await agent.isEnabled(), isTrue);
+
+      expect(await agent.setEnabled(true), isTrue);
+      expect(await agent.setEnabled(false), isTrue);
+      expect(file.existsSync(), isFalse);
+      expect(await agent.isEnabled(), isFalse);
+      expect(await agent.setEnabled(false), isTrue);
+    });
+
+    test('escapes the executable path for XML', () {
+      final agent = LaunchAgentAutostart(
+        home: home.path,
+        executable: '/Users/a&b/Apps/<Zip>Top.app/Contents/MacOS/ZipTop',
+      );
+      expect(
+        agent.contents,
+        contains('<string>/Users/a&amp;b/Apps/&lt;Zip&gt;Top.app/Contents/MacOS/ZipTop</string>'),
+      );
+    });
+  });
+
+  group('revealInFolder', () {
+    late List<List<String>> calls;
+
+    Future<ProcessResult> fakeRun(String executable, List<String> arguments, {int exitCode = 0}) async {
+      calls.add([executable, ...arguments]);
+      return ProcessResult(0, exitCode, '', '');
+    }
+
+    setUp(() => calls = []);
+
+    test('selects the file in Finder on macOS', () async {
+      await revealInFolder('/Users/viewer/Movies/ZipTop/News.ts', run: fakeRun, os: 'macos');
+      expect(calls, [
+        ['open', '-R', '/Users/viewer/Movies/ZipTop/News.ts'],
+      ]);
+    });
+
+    test('selects the file in Explorer on Windows', () async {
+      await revealInFolder(r'C:\Videos\News.ts', run: fakeRun, os: 'windows');
+      expect(calls, [
+        ['explorer.exe', '/select,', r'C:\Videos\News.ts'],
+      ]);
+    });
+
+    test('falls back to xdg-open on Linux without a file manager', () async {
+      await revealInFolder(
+        '/home/viewer/Videos/ZipTop/News.ts',
+        run: (exe, args) => fakeRun(exe, args, exitCode: exe == 'dbus-send' ? 1 : 0),
+        os: 'linux',
+      );
+      expect(calls.first.first, 'dbus-send');
+      expect(calls.last, ['xdg-open', '/home/viewer/Videos/ZipTop']);
+    });
+  });
+
   group('xdgVideosDir', () {
     const home = '/home/viewer';
 
@@ -75,13 +164,13 @@ void main() {
   });
 
   test(
-    'freeDiskBytes reads the free space of a Linux volume',
+    'freeDiskBytes reads the free space of a Linux or macOS volume',
     () {
       final free = freeDiskBytes(Directory.systemTemp.path);
       expect(free, isNotNull);
       expect(free, greaterThan(0));
       expect(freeDiskBytes('/no/such/directory/ziptop'), isNull);
     },
-    skip: Platform.isLinux ? false : 'statvfs is Linux-only',
+    skip: Platform.isLinux || Platform.isMacOS ? false : 'statvfs/statfs are Linux and macOS only',
   );
 }

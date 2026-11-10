@@ -1,0 +1,78 @@
+# Keep in step with MACOSX_DEPLOYMENT_TARGET in Runner.xcodeproj and
+# macos/third_party/build_libmpv.sh.
+platform :osx, '13.0'
+
+# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'ephemeral', 'Flutter-Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure \"flutter pub get\" is executed first"
+  end
+
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Flutter-Generated.xcconfig, then run \"flutter pub get\""
+end
+
+require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+flutter_macos_podfile_setup
+
+target 'Runner' do
+  use_frameworks!
+
+  flutter_install_all_macos_pods File.dirname(File.realpath(__FILE__))
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
+end
+
+# Puts the libmpv 0.42 build into every build of the app (flutter run,
+# flutter build macos, Xcode), in place of media_kit's older Mpv.framework,
+# which crashes on the backend's DASH streams (see mpvPlaysDash in
+# lib/player/mpv_player.dart). The step has to come after CocoaPods'
+# "[CP] Embed Pods Frameworks", which copies media_kit's framework in, and
+# CocoaPods adds that step whenever it integrates, so this runs after it
+# (post_integrate) and moves the swap to the end each time.
+# Without macos/third_party/build_libmpv.sh having run, the step only warns.
+LIBMPV_PHASE = 'Swap in libmpv 0.42'
+
+post_integrate do |installer|
+  installer.aggregate_targets.map(&:user_project).compact.uniq.each do |project|
+    runner = project.targets.find { |t| t.name == 'Runner' }
+    next unless runner
+
+    phase = runner.shell_script_build_phases.find { |p| p.name == LIBMPV_PHASE } ||
+            runner.new_shell_script_build_phase(LIBMPV_PHASE)
+    phase.shell_path = '/bin/sh'
+    phase.shell_script = "\"$SRCROOT/third_party/install_libmpv.sh\" --optional \"$TARGET_BUILD_DIR/$WRAPPER_NAME\"\n"
+    # No inputs or outputs to compare: run on every build.
+    phase.always_out_of_date = '1' if phase.respond_to?(:always_out_of_date=)
+    unless runner.build_phases.last.equal?(phase)
+      runner.build_phases.delete(phase)
+      runner.build_phases << phase
+    end
+    project.save
+  end
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_macos_build_settings(target)
+    target.build_configurations.each do |config|
+      config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '13.0'
+      # Apple Silicon only, like the Runner target (Configs/AppInfo.xcconfig).
+      config.build_settings['EXCLUDED_ARCHS'] = 'x86_64'
+    end
+  end
+end

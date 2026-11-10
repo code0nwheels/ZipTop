@@ -244,6 +244,199 @@ void main() {
     });
   });
 
+  group('UpdateService on macOS', () {
+    late OneAnswer adapter;
+    late SettingsStore settings;
+    // Stands in for /Applications.
+    late Directory applications;
+    late String bundle;
+    late List<List<String>> calls;
+    late List<List<String>> started;
+    late Future<void> Function(String, List<String>) originalLauncher;
+
+    String join(String a, String b) => '$a${Platform.pathSeparator}$b';
+    late String staged;
+    late String old;
+
+    /// Plays hdiutil and ditto: ditto "copies" a bundle marked `new` unless
+    /// told to fail or to copy nothing.
+    Future<ProcessResult> Function(String, List<String>) fakeRunner({
+      bool dittoFails = false,
+      bool dittoCopies = true,
+    }) =>
+        (exe, args) async {
+          calls.add([exe, ...args]);
+          if (exe == 'ditto') {
+            if (dittoFails) {
+              await Directory(args[1]).create();
+              return ProcessResult(0, 1, '', 'ditto: No space left on device');
+            }
+            if (dittoCopies) {
+              await Directory(args[1]).create();
+              await File(join(args[1], 'version')).writeAsString('new');
+            }
+          }
+          return ProcessResult(0, 0, '', '');
+        };
+
+    UpdateService mac({
+      String? appBundle,
+      Future<ProcessResult> Function(String, List<String>)? run,
+    }) =>
+        UpdateService(
+          settings: settings,
+          currentVersion: '1.2.0',
+          http: Dio()..httpClientAdapter = adapter,
+          platform: UpdatePlatform.macos,
+          appBundle: appBundle ?? bundle,
+          run: run ?? fakeRunner(),
+        );
+
+    Future<File> diskImage() async {
+      final dmg = File(join(applications.path, 'ZipTop-1.3.0-macos-arm64.dmg'));
+      await dmg.writeAsString('dmg');
+      return dmg;
+    }
+
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({});
+      settings = await SettingsStore.load();
+      adapter = OneAnswer(
+        200,
+        release('v1.3.0', assets: [
+          'ZipTop-Setup-{v}.exe',
+          'ZipTop-{v}-x86_64.AppImage',
+          'ZipTop-{v}-macos-x86_64.dmg',
+          'ZipTop-{v}-macos-arm64.dmg',
+        ]),
+      );
+      applications = await Directory.systemTemp.createTemp('ziptop_update_mac_test');
+      bundle = join(applications.path, 'ZipTop.app');
+      staged = join(applications.path, '.ZipTop-update.app');
+      old = join(applications.path, '.ZipTop-old.app');
+      await Directory(bundle).create();
+      await File(join(bundle, 'version')).writeAsString('old');
+      calls = [];
+      started = [];
+      originalLauncher = UpdateService.detachedLauncher;
+      UpdateService.detachedLauncher = (exe, args) async => started.add([exe, ...args]);
+    });
+
+    tearDown(() async {
+      UpdateService.detachedLauncher = originalLauncher;
+      await applications.delete(recursive: true);
+    });
+
+    test('picks the Apple Silicon disk image and ignores the other builds', () async {
+      final update = await mac().check();
+      expect(
+        update!.downloadUrl,
+        'https://github.com/code0nwheels/ZipTop/releases/download/v1.3.0/ZipTop-1.3.0-macos-arm64.dmg',
+      );
+    });
+
+    test('nothing to offer when the release has no disk image', () async {
+      adapter.body = release('v1.3.0', assets: ['ZipTop-Setup-{v}.exe', 'ZipTop-{v}-x86_64.AppImage']);
+      expect(await mac().check(), isNull);
+    });
+
+    test('nothing to offer unless installed as an app in a writable folder', () async {
+      for (final path in [
+        join(applications.path, 'ZipTop'),
+        '/Volumes/ZipTop/ZipTop.app',
+        '/private/var/folders/xy/abc/T/AppTranslocation/1234-ABCD/d/ZipTop.app',
+        join(join(applications.path, 'gone'), 'ZipTop.app'),
+      ]) {
+        expect(await mac(appBundle: path).check(), isNull, reason: path);
+      }
+      expect(adapter.requests, isEmpty);
+      expect(applications.listSync(), hasLength(1), reason: 'the write probe is cleaned up');
+    });
+
+    test('downloads the disk image to the temp folder', () async {
+      final service = mac();
+      final file = await service.download((await service.check())!);
+      addTearDown(() => file.delete());
+      expect(
+        file.path,
+        join(Directory.systemTemp.path, 'ZipTop-1.3.0-macos-arm64.dmg'),
+      );
+      expect(await file.exists(), isTrue);
+      expect(await File('${file.path}.download').exists(), isFalse);
+    });
+
+    test('install copies the new app out of the image, swaps it in and hands over', () async {
+      final dmg = await diskImage();
+      // Left by an update that didn't finish.
+      await Directory(staged).create();
+      await File(join(staged, 'stale')).writeAsString('');
+      await Directory(old).create();
+
+      await mac().install(dmg);
+
+      expect(calls, hasLength(3));
+      final attach = calls[0];
+      expect(attach.take(6), ['hdiutil', 'attach', '-nobrowse', '-readonly', '-noautoopen', '-mountpoint']);
+      final mount = attach[6];
+      expect(attach.sublist(7), [dmg.path]);
+      expect(calls[1], ['ditto', join(mount, 'ZipTop.app'), staged]);
+      expect(calls[2], ['hdiutil', 'detach', mount]);
+      expect(await Directory(mount).exists(), isFalse, reason: 'the mount point is removed');
+      expect(await dmg.exists(), isFalse, reason: 'the download is removed');
+
+      expect(await File(join(bundle, 'version')).readAsString(), 'new');
+      expect(await File(join(bundle, 'stale')).exists(), isFalse);
+      expect(await File(join(old, 'version')).readAsString(), 'old');
+      expect(await Directory(staged).exists(), isFalse);
+
+      final script = started.single;
+      expect(script.take(2), ['/bin/sh', '-c']);
+      expect(script[2], contains('while kill -0 $pid'));
+      expect(script[2], contains('rm -rf "\$1"'));
+      expect(script[2], contains('open "\$2"'));
+      expect(script[2], isNot(contains(applications.path)), reason: 'paths are arguments');
+      expect(script.sublist(4), [old, bundle]);
+    });
+
+    test('install detaches the image even when the copy fails', () async {
+      final dmg = await diskImage();
+      await expectLater(
+        mac(run: fakeRunner(dittoFails: true)).install(dmg),
+        throwsA(isA<FileSystemException>()
+            .having((e) => e.message, 'message', contains('No space left'))),
+      );
+      expect(calls.map((c) => c.first), ['hdiutil', 'ditto', 'hdiutil']);
+      expect(calls[2], ['hdiutil', 'detach', calls[0][6]]);
+      expect(await Directory(staged).exists(), isFalse, reason: 'the partial copy is removed');
+      expect(await File(join(bundle, 'version')).readAsString(), 'old');
+      expect(started, isEmpty);
+    });
+
+    test('install puts the running app back when the update cannot be moved in', () async {
+      final dmg = await diskImage();
+      await expectLater(
+        mac(run: fakeRunner(dittoCopies: false)).install(dmg),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(await File(join(bundle, 'version')).readAsString(), 'old');
+      expect(await Directory(old).exists(), isFalse);
+      expect(started, isEmpty);
+    });
+
+    test('install stops when the image cannot be mounted', () async {
+      final dmg = await diskImage();
+      final service = mac(run: (exe, args) async {
+        calls.add([exe, ...args]);
+        return ProcessResult(0, 1, '', 'hdiutil: attach failed - image not recognized');
+      });
+      await expectLater(service.install(dmg), throwsA(isA<FileSystemException>()));
+      expect(calls, hasLength(1));
+      expect(await Directory(calls.single[7]).exists(), isFalse);
+      expect(await File(join(bundle, 'version')).readAsString(), 'old');
+      expect(started, isEmpty);
+    });
+  });
+
   group('StartupRegistration', () {
     test('adds, queries and removes the Run entry with the minimized switch', () async {
       final calls = <List<String>>[];

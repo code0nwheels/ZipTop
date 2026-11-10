@@ -2,9 +2,10 @@ name: Build and release
 
 # - Every merge to main is released: the latest v* tag plus a patch bump
 #   (v1.2.3 -> 1.2.4), or a minor or major one when the merged pull request
-#   is labelled release:minor or release:major. The Windows installer and
-#   the Linux AppImage are published as GitHub Release v1.2.4, which also
-#   creates the tag. Installed copies of ZipTop offer it as an update.
+#   is labelled release:minor or release:major. The Windows installer, the
+#   Linux AppImage and the macOS DMG are published as GitHub Release v1.2.4,
+#   which also creates the tag. Installed copies of ZipTop offer it as an
+#   update.
 # - A pull request labelled release:skip (docs, CI) only makes test builds,
 #   versioned as the next patch with -dev.<run> (e.g. 1.2.4-dev.57) and
 #   attached to the run.
@@ -211,9 +212,99 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  macos:
+    name: macOS DMG
+    needs: version
+    # Apple Silicon. The DMG is arm64 only and needs macOS 13 or later.
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # Build tools only; macos/third_party/build_libmpv.sh builds every
+      # library the app ships from pinned sources.
+      - name: Install build tools
+        run: brew install pkgconf
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # macos/third_party/build_libmpv.sh builds libmpv 0.42 and FFmpeg from
+      # pinned sources (several minutes); keep the result between runs.
+      - name: Cache libmpv
+        uses: actions/cache@v4
+        with:
+          path: |
+            macos/third_party/libmpv
+            !macos/third_party/libmpv/src
+          key: libmpv-macos-${{ hashFiles('macos/third_party/build_libmpv.sh') }}
+
+      - name: Get packages
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Build release and DMG
+        run: >
+          ./tool/build_dmg.sh
+          --version '${{ needs.version.outputs.version }}'
+          --build-number ${{ needs.version.outputs.build_number }}
+
+      # Nobody can watch a channel play here, so check what can be checked:
+      # the bundled libmpv loads on its own and is new enough for DASH...
+      - name: Probe the bundled libmpv
+        run: dart run tool/mpv_probe.dart build/macos/Build/Products/Release/ZipTop.app/Contents/Frameworks/Mpv.framework/Mpv
+
+      # ...and the app starts from the DMG and stays up (it loads libmpv at
+      # start-up). The screenshot shows what it drew.
+      - name: Launch from the DMG
+        run: |
+          mkdir -p smoke
+          dmg="build/dmg/ZipTop-${{ needs.version.outputs.version }}-macos-arm64.dmg"
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/ziptop-dmg" "$dmg"
+          "$RUNNER_TEMP/ziptop-dmg/ZipTop.app/Contents/MacOS/ZipTop" > smoke/ziptop.log 2>&1 &
+          pid=$!
+          sleep 20
+          screencapture -x smoke/screen.png || true
+          if ! kill -0 "$pid" 2>/dev/null; then
+            wait "$pid" || echo "ZipTop exited with status $?"
+            cat smoke/ziptop.log
+            exit 1
+          fi
+          kill "$pid"
+          wait "$pid" || true
+          hdiutil detach "$RUNNER_TEMP/ziptop-dmg"
+          echo "ZipTop ran for 20 s."
+
+      - name: Upload launch screenshot and log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-smoke-test
+          path: smoke/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZipTop-${{ needs.version.outputs.version }}-macos-arm64.dmg
+          path: build/dmg/ZipTop-*-macos-arm64.dmg
+          if-no-files-found: error
+          retention-days: 30
+
   release:
     name: Publish release
-    needs: [version, windows, linux]
+    needs: [version, windows, linux, macos]
     if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -232,7 +323,7 @@ jobs:
           # at the commit that was built.
           gh release create "v$VERSION" \
             "dist/ZipTop-Setup-$VERSION.exe" \
-            "dist/ZipTop-$VERSION-x86_64.AppImage" \
+            "dist/ZipTop-$VERSION-x86_64.AppImage"             "dist/ZipTop-$VERSION-macos-arm64.dmg" \
             --repo "$GITHUB_REPOSITORY" \
             --title "ZipTop $VERSION" \
             --target "$GITHUB_SHA" \

@@ -1,7 +1,7 @@
 # ZipTop
 
-The ZipStreams desktop client for Windows and Linux: live TV, TV guide,
-multiview and DVR. Built with Flutter, playing through mpv (libmpv via media_kit).
+The ZipStreams desktop client for Windows, Linux and macOS: live TV, TV
+guide, multiview and DVR. Built with Flutter, playing through mpv (libmpv via media_kit).
 
 It is the desktop counterpart of the Android TV app and talks to the same
 backend with the same device-code pairing.
@@ -48,6 +48,48 @@ Keyring or KWallet) for the pairing token. The tray icon needs a
 StatusNotifier host; on stock GNOME (without the AppIndicator extension)
 ZipTop minimizes instead of hiding to the tray.
 
+### macOS
+
+> macOS support is new and has not yet been tried on a real Mac. CI builds
+> it, checks the bundled libmpv and launches the app, but nobody has watched
+> a channel on it yet. Reports welcome.
+
+Apple Silicon only (arm64), macOS 13 or later. Requirements: Xcode,
+CocoaPods, Homebrew's `pkgconf` (`brew install pkgconf`) and Flutter (stable). Then:
+
+```
+macos/third_party/build_libmpv.sh
+flutter pub get
+flutter run -d macos
+```
+
+`build_libmpv.sh` builds mpv 0.42 with FFmpeg, libplacebo and libass from
+pinned, checksummed sources into `macos/third_party/libmpv/` (several
+minutes, once). Every build then puts it into the app in place of
+media_kit's own, older Mpv.framework. That is done by a "Swap in libmpv 0.42"
+build step, which `macos/Podfile` adds after CocoaPods' own steps. Without
+`build_libmpv.sh` the step only warns, and DASH channels are refused.
+
+The project uses CocoaPods, not Swift Package Manager (media_kit's macOS
+plugins only support CocoaPods; see `flutter: config:` in `pubspec.yaml`).
+The first `pod install`, which `flutter run` does by itself, adds its build
+steps and the libmpv step to `macos/Runner.xcodeproj`. Commit that change.
+
+#### Installing an unsigned build
+
+ZipTop is not signed with an Apple Developer ID or notarized, so macOS
+blocks it the first time:
+
+1. Open the DMG and drag ZipTop into Applications.
+2. Open ZipTop. macOS says it can't check it for malicious software. Click
+   **Done**.
+3. Open **System Settings > Privacy & Security**, scroll down to
+   "ZipTop was blocked…" and click **Open Anyway**, then confirm.
+
+This is needed once. Updates installed from inside ZipTop aren't blocked
+again. macOS may ask once after an update whether ZipTop may use the
+keychain item holding its pairing token. Click **Always Allow**.
+
 Build-time options, passed as `--dart-define=NAME=value`:
 
 | Name | Default | Purpose |
@@ -75,12 +117,13 @@ Versions come from git tags, not from `pubspec.yaml`.
   | `release:skip` | no release, only a test build |
 
   It builds that version and publishes GitHub Release `v1.2.4` with
-  `ZipTop-Setup-1.2.4.exe`, `ZipTop-1.2.4-x86_64.AppImage` and notes
-  generated from the merged pull requests. Publishing creates the tag.
+  `ZipTop-Setup-1.2.4.exe`, `ZipTop-1.2.4-x86_64.AppImage`,
+  `ZipTop-1.2.4-macos-arm64.dmg` and notes generated from the merged pull
+  requests. Publishing creates the tag.
   Builds run one at a time and are never cancelled. If several merges land
   while one is building, only the newest waits, and its release includes
   the others.
-- **Test builds:** a `release:skip` merge builds both, numbered as the next
+- **Test builds:** a `release:skip` merge builds all three, numbered as the next
   patch with the CI run number, e.g. `1.2.4-dev.57`. They are attached to
   the run under *Artifacts* for 30 days and are never offered as updates.
 - **A specific version:** push a tag, or run *Build and release* from the
@@ -117,6 +160,19 @@ script builds libmpv if needed, bundles the libraries a desktop can't be
 relied on to have (tray, keyring, mpv's), and packs it with a pinned
 appimagetool and AppImage runtime.
 
+On macOS:
+
+```
+tool/build_dmg.sh --version 1.3.0
+```
+
+The DMG lands in `build/dmg/ZipTop-<version>-macos-arm64.dmg`. The script
+builds libmpv if needed, makes sure it is in the app's `Mpv.framework`, checks
+that nothing in the app loads a library from outside it or macOS, signs it
+ad hoc and packs the DMG. CI also loads the bundled libmpv with
+`tool/mpv_probe.dart` and launches the app from the DMG for 20 seconds,
+saving a screenshot with the run's artifacts.
+
 ### Updates
 
 Installed copies ask GitHub for the latest release
@@ -126,7 +182,11 @@ version and it has this platform's asset, ZipTop offers it. On Windows it
 downloads `ZipTop-Setup-*.exe` and runs it. On Linux it downloads
 `ZipTop-*-x86_64.AppImage` next to the running AppImage, renames it over it
 and restarts; a Linux build not run as an AppImage, or one in a folder it
-can't write to, is not offered updates. Drafts and pre-releases are skipped; a
+can't write to, is not offered updates. On macOS it downloads
+`ZipTop-*-macos-arm64.dmg`, copies the app out of it beside the running
+one, swaps the two and restarts. A copy run from the DMG itself, one macOS
+has not let out of quarantine yet, or one in a folder it can't write to,
+is not offered updates. Drafts and pre-releases are skipped; a
 test build is offered the release it leads up to.
 
 GitHub only answers this without a sign-in for **public** repositories. While
@@ -135,16 +195,20 @@ the repository is private, update checks find nothing.
 ## Where things are kept
 
 - Pairing token: Windows Credential Manager; on Linux the Secret Service
-  keyring.
+  keyring; on macOS the login keychain.
 - Settings and the recordings list: `%APPDATA%\com.zipstreams\ziptop\` on
-  Windows, `~/.local/share/com.zipstreams.ziptop/` on Linux. The folder
-  names come from CompanyName and ProductName in `windows/runner/Runner.rc`
-  and from `APPLICATION_ID` in `linux/CMakeLists.txt`; changing them
-  orphans existing users' data.
-- Recordings: `Videos\ZipTop` by default (on Linux, the XDG Videos folder),
-  changeable in the app.
+  Windows, `~/.local/share/com.zipstreams.ziptop/` on Linux,
+  `~/Library/Application Support/com.zipstreams.ziptop/` on macOS. The
+  folder names come from CompanyName and ProductName in
+  `windows/runner/Runner.rc`, from `APPLICATION_ID` in
+  `linux/CMakeLists.txt` and from `PRODUCT_BUNDLE_IDENTIFIER` in
+  `macos/Runner/Configs/AppInfo.xcconfig`; changing them orphans existing
+  users' data.
+- Recordings: `Videos\ZipTop` by default (on Linux, the XDG Videos folder;
+  on macOS, `~/Movies/ZipTop`), changeable in the app.
 - Start at sign-in: the current user's Run key on Windows,
-  `~/.config/autostart/ziptop.desktop` on Linux.
+  `~/.config/autostart/ziptop.desktop` on Linux,
+  `~/Library/LaunchAgents/com.zipstreams.ziptop.plist` on macOS.
 
 ## Layout
 
@@ -155,5 +219,6 @@ lib/dvr         capture, scheduling and the recordings store
 lib/features    login, shell, live, guide, multiview, recordings, settings, update
 installer       Inno Setup script
 linux           GTK runner, libmpv build script, AppImage files
+macos           Cocoa runner, libmpv build and install scripts
 tool            build and version scripts
 ```
