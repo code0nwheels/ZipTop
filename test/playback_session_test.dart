@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ziptop/core/api/streams_api.dart';
 import 'package:ziptop/core/models/playback.dart';
 import 'package:ziptop/core/session/playback_session.dart';
-import 'package:ziptop/player/mpv_player.dart' show RetryPolicy, isDashUrl, mpvPlaysDash;
+import 'package:ziptop/player/mpv_player.dart' show RetryPolicy, isDashUrl, isReloadableError, mpvPlaysDash;
 
 /// Records every call and answers from scripted values.
 class FakeStreamsApi implements StreamsApi {
@@ -285,5 +285,15 @@ void main() {
 
     expect(isDashUrl('https://h/api/hls/1/a/b/manifest.mpd'), isTrue);
     expect(isDashUrl('https://h/api/hls/1/a/b/index.m3u8'), isFalse);
+  });
+
+  test('a sound-device failure is not a reason to reload the stream', () {
+    expect(
+      isReloadableError('Could not open/initialize audio device -> no sound.'),
+      isFalse,
+    );
+    expect(isReloadableError("Failed to initialize audio driver 'openal'"), isFalse);
+    expect(isReloadableError('Failed to open https://h/segment/1.m4v.'), isTrue);
+    expect(isReloadableError('Failed to recognize file format.'), isTrue);
   });
 }

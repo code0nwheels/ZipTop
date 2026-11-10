@@ -224,6 +224,18 @@ class LiveController extends ChangeNotifier {
     }
   }
 
+  /// Stops playback and gives the server slot back, keeping the channel so
+  /// [resume] can pick it up again (while multiview has the screen).
+  Future<void> suspend() async {
+    _cancelRecovery();
+    cancelNumber();
+    _playingUrl = null;
+    unawaited(player.stop());
+    await session.close();
+  }
+
+  Future<void> resume() => retryNow();
+
   /// Stops playback and releases the server slot (sign-out, app exit).
   Future<void> shutdown() async {
     _cancelRecovery();
@@ -288,13 +300,16 @@ class LiveController extends ChangeNotifier {
   }
 
   void _onError(String message) {
-    if (_playingUrl == null) return;
+    if (_playingUrl == null || !isReloadableError(message)) return;
     // mpv also reports recoverable hiccups here. Only treat it as fatal if
     // playback has not moved on a few seconds later.
     final mark = _position;
     _errorTimer?.cancel();
     _errorTimer = Timer(_errorGrace, () {
-      if (_position == mark) _recover(_retry.nextAfterError());
+      // Still loading is the stall timer's business, not an error.
+      if (_position == mark && !player.player.state.buffering) {
+        _recover(_retry.nextAfterError());
+      }
     });
   }
 

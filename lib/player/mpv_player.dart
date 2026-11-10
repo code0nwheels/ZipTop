@@ -36,6 +36,13 @@ bool mpvPlaysDash(String? mpvVersion) {
   return major > 0 || minor >= 42;
 }
 
+/// mpv reports some problems that reloading the stream cannot fix, such as
+/// the sound device being unavailable. Those must not restart playback.
+bool isReloadableError(String message) {
+  final text = message.toLowerCase();
+  return !(text.contains('audio device') || text.contains('audio driver'));
+}
+
 bool isDashUrl(String url) =>
     (Uri.tryParse(url)?.path ?? url).toLowerCase().endsWith('.mpd');
 
@@ -110,6 +117,18 @@ class MpvPlayer {
         },
       ),
     );
+  }
+
+  /// Limits which HLS variant the next [play] picks: the best one at or
+  /// under [bitsPerSecond], or the best there is when null. mpv reads this
+  /// when a stream opens, so it does not disturb one that is playing. It has
+  /// no effect on DASH.
+  Future<void> setHlsBitrateCap(int? bitsPerSecond) async {
+    await _ready;
+    final native = player.platform;
+    if (native is NativePlayer) {
+      await native.setProperty('hls-bitrate', bitsPerSecond?.toString() ?? 'max');
+    }
   }
 
   Future<void> stop() async {

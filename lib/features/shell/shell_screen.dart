@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,6 +19,8 @@ import '../guide/guide_view.dart';
 import '../live/channel_panel.dart';
 import '../live/live_controller.dart';
 import '../live/video_pane.dart';
+import '../multiview/multiview_controller.dart';
+import '../multiview/multiview_view.dart';
 import '../settings/settings_dialog.dart';
 
 /// The signed-in app: a slim navigation rail, the channel panel and the video.
@@ -32,7 +36,7 @@ class ShellScreen extends ConsumerStatefulWidget {
   ConsumerState<ShellScreen> createState() => _ShellScreenState();
 }
 
-enum _View { live, guide }
+enum _View { live, guide, multiview }
 
 class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
   static const _categoriesWidth = 190.0;
@@ -45,6 +49,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
   late final PlaybackSession _session;
   late final MpvPlayer _player;
   late final LiveController _live;
+  late final MultiviewController _multi;
 
   final _focus = FocusNode(debugLabel: 'shell');
   final _searchFocus = FocusNode(debugLabel: 'search');
@@ -74,6 +79,14 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
       session: _session,
       player: _player,
     );
+    _multi = MultiviewController(
+      catalog: _catalog,
+      settings: _settings,
+      api: ref.read(streamsApiProvider),
+      config: ref.read(apiConfigProvider),
+    );
+    // Volume changes reach whichever multiview tile has the audio.
+    _settings.addListener(_multi.refreshAudio);
     windowManager.addListener(this);
     unawaited(windowManager.setPreventClose(true));
     unawaited(_boot());
@@ -95,6 +108,10 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
       _bootError = "Couldn't load channels. $e";
     }
     if (mounted) setState(() => _booting = false);
+    // Debug builds only: open straight into a view, for testing from scripts.
+    if (kDebugMode && mounted && Platform.environment['ZIPTOP_START_VIEW'] == 'multiview') {
+      _showView(_View.multiview);
+    }
   }
 
   /// Releases the server slot before the window goes away.
@@ -105,7 +122,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     // The window goes at once; telling the server we left happens behind it.
     await windowManager.hide();
     try {
-      await _live.shutdown().timeout(const Duration(seconds: 3));
+      await Future.wait([_live.shutdown(), _multi.closeAll()])
+          .timeout(const Duration(seconds: 3));
     } catch (_) {
       // Closing regardless.
     }
@@ -122,8 +140,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     if (!mounted || _fullscreen == value) return;
     setState(() {
       _fullscreen = value;
-      // Full screen is always the video.
-      if (value) _view = _View.live;
+      // The guide has no full-screen form; it gives way to the video.
+      if (value && _view == _View.guide) _view = _View.live;
       _edgePanel = false;
     });
     _touchControls();
@@ -147,6 +165,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
   Future<void> _signOut() async {
     if (_fullscreen) await _setFullscreen(false);
     await _live.shutdown();
+    await _multi.closeAll();
     await ref.read(tokenStoreProvider).clear();
     _catalog.clear();
     _guide.clear();
@@ -175,9 +194,68 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
 
   void _showView(_View view) {
     if (_view == view) return;
+    final leavingMultiview = _view == _View.multiview;
     setState(() => _view = view);
+    if (view == _View.multiview) {
+      unawaited(_enterMultiview());
+    } else if (leavingMultiview) {
+      unawaited(_leaveMultiview());
+    }
     _focus.requestFocus();
     _touchControls();
+  }
+
+  /// The single player hands its stream slot over before the tiles start.
+  Future<void> _enterMultiview() async {
+    final seed = _live.current;
+    await _live.suspend();
+    if (!mounted || _view != _View.multiview) return;
+    _multi.enter(seed: seed);
+  }
+
+  Future<void> _leaveMultiview() async {
+    await _multi.closeAll();
+    if (mounted && _view != _View.multiview) await _live.resume();
+  }
+
+  KeyEventResult _onMultiviewKey(LogicalKeyboardKey key) {
+    final digit = _digitKeys[key];
+    final tiles = _multi.tiles;
+    final selected = _multi.selected;
+    if (digit != null) {
+      if (digit >= 1 && digit <= tiles.length) _multi.select(tiles[digit - 1]);
+    } else if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.arrowUp) {
+      _multi.selectRelative(-1);
+    } else if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.arrowDown) {
+      _multi.selectRelative(1);
+    } else if (key == LogicalKeyboardKey.keyM) {
+      unawaited(_live.toggleMute());
+    } else if (key == LogicalKeyboardKey.space) {
+      if (selected != null) _multi.togglePause(selected);
+    } else if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+      if (selected != null && tiles.length > 1) _multi.toggleFullTile(selected);
+    } else if (key == LogicalKeyboardKey.delete) {
+      if (selected != null) _multi.remove(selected);
+    } else if (key == LogicalKeyboardKey.keyF || key == LogicalKeyboardKey.f11) {
+      unawaited(_setFullscreen(!_fullscreen));
+    } else if (key == LogicalKeyboardKey.escape) {
+      if (_multi.fullTile != null) {
+        _multi.exitFullTile();
+      } else if (_fullscreen) {
+        unawaited(_setFullscreen(false));
+      } else {
+        _showView(_View.live);
+      }
+    } else if (key == LogicalKeyboardKey.keyV) {
+      if (_fullscreen) return KeyEventResult.ignored;
+      _showView(_View.live);
+    } else if (key == LogicalKeyboardKey.keyG) {
+      if (_fullscreen) return KeyEventResult.ignored;
+      _showView(_View.guide);
+    } else {
+      return KeyEventResult.ignored;
+    }
+    return KeyEventResult.handled;
   }
 
   /// From the guide: tune and go back to the video.
@@ -187,7 +265,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
   }
 
   void _focusSearch() {
-    if (_view != _View.live) setState(() => _view = _View.live);
+    _showView(_View.live);
     if (_fullscreen) {
       setState(() => _edgePanel = true);
     } else if (!_settings.panelOpen) {
@@ -266,6 +344,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
       return KeyEventResult.ignored;
     }
 
+    if (_view == _View.multiview) return _onMultiviewKey(key);
+
     final digit = _digitKeys[key];
     if (digit != null) {
       _live.typeDigit(digit);
@@ -308,6 +388,9 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     } else if (key == LogicalKeyboardKey.keyG) {
       if (_fullscreen) return KeyEventResult.ignored;
       _showView(_view == _View.guide ? _View.live : _View.guide);
+    } else if (key == LogicalKeyboardKey.keyV) {
+      if (_fullscreen) return KeyEventResult.ignored;
+      _showView(_View.multiview);
     } else if (key == LogicalKeyboardKey.keyI) {
       // Info: show the controls with what's on.
     } else {
@@ -322,6 +405,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     windowManager.removeListener(this);
     unawaited(windowManager.setPreventClose(false));
     _controlsTimer?.cancel();
+    _settings.removeListener(_multi.refreshAudio);
+    _multi.dispose();
     _focus.dispose();
     _searchFocus.dispose();
     _search.dispose();
@@ -381,6 +466,15 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
                 _channelsWidth + (_settings.categoriesOpen ? _categoriesWidth : 0);
             final panelOpen = _settings.panelOpen;
 
+            final multiview = MultiviewView(
+              controller: _multi,
+              fullscreen: _fullscreen,
+              onToggleFullscreen: () => _setFullscreen(!_fullscreen),
+              onInteraction: _focus.requestFocus,
+            );
+
+            if (_fullscreen && _view == _View.multiview) return multiview;
+
             if (_fullscreen) {
               return Stack(
                 fit: StackFit.expand,
@@ -419,13 +513,18 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
               children: [
                 _NavRail(
                   guideOpen: _view == _View.guide,
+                  multiviewOpen: _view == _View.multiview,
+                  onMultiview: () =>
+                      _showView(_view == _View.multiview ? _View.live : _View.multiview),
                   panelOpen: _view == _View.live && panelOpen,
                   onTogglePanel: _togglePanel,
                   onGuide: () => _showView(_view == _View.guide ? _View.live : _View.guide),
                   onSearch: _focusSearch,
                   onSettings: _openSettings,
                 ),
-                if (_view == _View.guide)
+                if (_view == _View.multiview)
+                  Expanded(child: multiview)
+                else if (_view == _View.guide)
                   Expanded(
                     child: GuideView(
                       repository: _guide,
@@ -450,6 +549,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
 class _NavRail extends StatelessWidget {
   const _NavRail({
     required this.guideOpen,
+    required this.multiviewOpen,
+    required this.onMultiview,
     required this.panelOpen,
     required this.onTogglePanel,
     required this.onGuide,
@@ -458,6 +559,8 @@ class _NavRail extends StatelessWidget {
   });
 
   final bool guideOpen;
+  final bool multiviewOpen;
+  final VoidCallback onMultiview;
   final bool panelOpen;
   final VoidCallback onTogglePanel;
   final VoidCallback onGuide;
@@ -490,6 +593,13 @@ class _NavRail extends StatelessWidget {
             onPressed: onGuide,
             icon: const Icon(Icons.calendar_view_week_outlined),
             selectedIcon: const Icon(Icons.calendar_view_week, color: ZipColors.accent),
+          ),
+          IconButton(
+            tooltip: 'Multiview (V)',
+            isSelected: multiviewOpen,
+            onPressed: onMultiview,
+            icon: const Icon(Icons.grid_view_outlined),
+            selectedIcon: const Icon(Icons.grid_view, color: ZipColors.accent),
           ),
           IconButton(
             tooltip: 'Search (Ctrl+F)',

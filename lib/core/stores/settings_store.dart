@@ -17,6 +17,8 @@ class SettingsStore extends ChangeNotifier {
   static const _volumeKey = 'volume';
   static const _panelOpenKey = 'channel_panel_open';
   static const _categoriesOpenKey = 'categories_open';
+  static const _multiviewIdsKey = 'multiview_stream_ids';
+  static const _multiviewLayoutKey = 'multiview_layout';
 
   final SharedPreferences _prefs;
 
@@ -38,8 +40,10 @@ class SettingsStore extends ChangeNotifier {
   }
 
   /// Most recent first, at most [maxRecents].
-  List<String> get recentIds {
-    final raw = _prefs.getString(_recentsKey);
+  List<String> get recentIds => _idList(_recentsKey);
+
+  List<String> _idList(String key) {
+    final raw = _prefs.getString(key);
     if (raw == null) return const [];
     try {
       final decoded = jsonDecode(raw);
@@ -81,10 +85,28 @@ class SettingsStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The channels last shown in multiview, in tile order.
+  List<String> get multiviewIds => _idList(_multiviewIdsKey);
+  set multiviewIds(List<String> ids) {
+    _prefs.setString(_multiviewIdsKey, jsonEncode(ids));
+    notifyListeners();
+  }
+
+  String? get multiviewLayout => _prefs.getString(_multiviewLayoutKey);
+  set multiviewLayout(String? name) {
+    if (name == null) {
+      _prefs.remove(_multiviewLayoutKey);
+    } else {
+      _prefs.setString(_multiviewLayoutKey, name);
+    }
+    notifyListeners();
+  }
+
   /// Forgets what was watched here (sign-out). Preferences stay.
   void clearHistory() {
     _prefs.remove(_recentsKey);
     _prefs.remove(_lastChannelKey);
+    _prefs.remove(_multiviewIdsKey);
     notifyListeners();
   }
 }
