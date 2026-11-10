@@ -6,6 +6,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../../core/api/auth_api.dart';
 import '../../core/models/playback.dart';
 import '../../core/platform/startup.dart';
+import '../../core/platform/tray.dart';
 import '../../core/stores/catalog_store.dart';
 import '../../core/stores/settings_store.dart';
 import '../../theme.dart';
@@ -39,8 +40,16 @@ class SettingsDialog extends StatefulWidget {
 }
 
 /// What the start-at-sign-in switch is called on this platform.
-String get _startAtSignInLabel => Platform.isLinux ? 'Start when I sign in' : 'Start with Windows';
-String get _startUpSettingName => Platform.isLinux ? 'start-at-sign-in' : 'Windows start-up';
+String get _startAtSignInLabel => Platform.isMacOS
+    ? 'Open at login'
+    : Platform.isLinux
+        ? 'Start when I sign in'
+        : 'Start with Windows';
+String get _startUpSettingName => Platform.isMacOS
+    ? 'open-at-login'
+    : Platform.isLinux
+        ? 'start-at-sign-in'
+        : 'Windows start-up';
 
 class _SettingsDialogState extends State<SettingsDialog> {
   late final Future<AccountInfo> _account = widget.authApi.accountInfo();
@@ -178,8 +187,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
               const _Section('This computer'),
               SwitchListTile(
                 title: Text(_startAtSignInLabel),
-                subtitle: const Text(
-                  'Open ZipTop in the notification area when you sign in, so scheduled '
+                subtitle: Text(
+                  'Open ZipTop in the $trayPlaceName when you '
+                  '${Platform.isMacOS ? 'log in' : 'sign in'}, so scheduled '
                   'recordings are not missed',
                 ),
                 value: _startAtSignIn ?? false,

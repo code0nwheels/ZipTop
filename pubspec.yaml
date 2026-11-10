@@ -38,6 +38,7 @@ dependencies:
   media_kit_video: ^2.0.1
   media_kit_libs_windows_video: ^1.0.11
   media_kit_libs_linux: ^1.2.1
+  media_kit_libs_macos_video: ^1.1.4
   dio: ^5.11.1
   flutter_riverpod: ^3.5.0
   flutter_secure_storage: ^11.2.0
@@ -70,6 +71,10 @@ dev_dependencies:
 # The following section is specific to Flutter packages.
 flutter:
 
+  config:
+    # media_kit's macOS plugins are CocoaPods-only.
+    enable-swift-package-manager: false
+
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
@@ -79,6 +84,7 @@ flutter:
     - assets/logo.png
     - assets/icon.png
     - assets/app_icon.ico
+    - assets/tray_macos.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -55,3 +55,6 @@ app.*.map.json
 
 # Pinned libmpv build, made by linux/third_party/build_libmpv.sh
 /linux/third_party/libmpv/
+
+# Pinned libmpv build, made by macos/third_party/build_libmpv.sh
+/macos/third_party/libmpv/

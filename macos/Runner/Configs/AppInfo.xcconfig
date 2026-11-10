@@ -1,0 +1,22 @@
+// Application-level settings for the Runner target.
+
+// The application's name. By default this is also the title of the Flutter window.
+PRODUCT_NAME = ZipTop
+
+// The application's bundle identifier. lib/core/platform/startup.dart names
+// the login item after it.
+PRODUCT_BUNDLE_IDENTIFIER = com.zipstreams.ziptop
+
+// The copyright displayed in application information
+PRODUCT_COPYRIGHT = Copyright © 2026 ZipTop. All rights reserved.
+
+// Apple Silicon only: the bundled libmpv (macos/third_party/build_libmpv.sh)
+// is built for arm64.
+EXCLUDED_ARCHS = x86_64
+
+// CocoaPods links every framework media_kit_libs_macos_video vendors (its
+// FFmpeg, libass, mbedTLS...) into the executable, which uses none of them.
+// Dropping unused ones lets macos/third_party/install_libmpv.sh remove
+// them once Mpv.framework holds the libmpv 0.42 build, instead of loading
+// a second FFmpeg into the app.
+OTHER_LDFLAGS = $(inherited) -Wl,-dead_strip_dylibs

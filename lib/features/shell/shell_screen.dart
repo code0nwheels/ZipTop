@@ -9,6 +9,7 @@ import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../core/models/catalog.dart';
+import '../../core/platform/app_channel.dart';
 import '../../core/platform/tray.dart';
 import '../../core/session/playback_session.dart';
 import '../../core/stores/catalog_store.dart';
@@ -115,6 +116,10 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     windowManager.addListener(this);
     trayManager.addListener(this);
     unawaited(windowManager.setPreventClose(true));
+    // macOS: Cmd+Q, the app menu's Quit, or logging out. With the window
+    // showing, the same as closing it; from the menu bar nobody would see the
+    // keep-running question, so just quit.
+    AppChannel.listen(onQuitRequested: () async => _hiddenAway ? _quit() : onWindowClose());
     unawaited(_boot());
   }
 
@@ -128,7 +133,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     _dvr.start();
     final startHidden = ref.read(startHiddenProvider) && !_startedHidden;
     if (startHidden) {
-      // Started at sign-in: go straight to the notification area.
+      // Started at sign-in: go straight to the notification area (menu bar).
       _startedHidden = true;
       await _hideToTray();
     }
@@ -159,8 +164,9 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     }
   }
 
-  /// With recordings scheduled or running, closing the window offers to keep
-  /// ZipTop in the notification area so they still happen.
+  /// With recordings scheduled or running, closing the window (or quitting
+  /// on macOS) offers to keep ZipTop in the notification area or menu bar so
+  /// they still happen.
   @override
   void onWindowClose() async {
     if (_closing) return;
@@ -190,7 +196,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
           constraints: const BoxConstraints(maxWidth: 440),
           child: Text(
             'You have $what. Recordings only happen while ZipTop is running.\n\n'
-            'Keep it in the notification area, or quit and '
+            'Keep it in the $trayPlaceName, or quit and '
             '${recording > 0 ? 'stop recording' : 'miss them'}?',
           ),
         ),
@@ -229,6 +235,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
         await trayManager.destroy();
       } catch (_) {}
     }
+    await AppChannel.allowTerminate();
     await windowManager.destroy();
   }
 
@@ -252,7 +259,9 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     await windowManager.hide();
     _inTray = true;
     try {
-      await trayManager.setIcon(trayIconAsset);
+      // macOS: no Dock icon while in the menu bar, like other menu bar apps.
+      if (Platform.isMacOS) await windowManager.setSkipTaskbar(true);
+      await trayManager.setIcon(trayIconAsset, isTemplate: trayIconIsTemplate);
       await trayManager.setToolTip('ZipTop');
       await trayManager.setContextMenu(
         Menu(
@@ -266,6 +275,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     } catch (_) {
       // No tray icon: bring the window back rather than leave no way in.
       _inTray = false;
+      if (Platform.isMacOS) await windowManager.setSkipTaskbar(false);
       await windowManager.show();
       return;
     }
@@ -290,6 +300,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     try {
       await trayManager.destroy();
     } catch (_) {}
+    if (Platform.isMacOS) await windowManager.setSkipTaskbar(false);
     await windowManager.show();
     await windowManager.focus();
     await _resumeFromBackground();
@@ -691,6 +702,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   void dispose() {
     windowManager.removeListener(this);
     trayManager.removeListener(this);
+    AppChannel.stopListening();
     unawaited(windowManager.setPreventClose(false));
     _controlsTimer?.cancel();
     _bootRetry?.cancel();

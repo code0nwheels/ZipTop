@@ -71,6 +71,9 @@ class DvrService extends ChangeNotifier {
           p.join(home, 'Videos');
       return p.join(videos, 'ZipTop');
     }
+    if (Platform.isMacOS) {
+      return p.join(Platform.environment['HOME'] ?? '.', 'Movies', 'ZipTop');
+    }
     final home = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
     return p.join(home, 'Videos', 'ZipTop');
   }

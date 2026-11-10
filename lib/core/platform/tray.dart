@@ -1,10 +1,22 @@
 import 'dart:io';
 
 /// The tray icon for this platform: Windows wants an .ico, Linux
-/// (StatusNotifierItem / AppIndicator) a PNG.
-String get trayIconAsset => Platform.isLinux ? 'assets/icon.png' : 'assets/app_icon.ico';
+/// (StatusNotifierItem / AppIndicator) a PNG, and the macOS menu bar a
+/// monochrome template image, which it tints to suit the menu bar.
+String get trayIconAsset {
+  if (Platform.isMacOS) return 'assets/tray_macos.png';
+  if (Platform.isLinux) return 'assets/icon.png';
+  return 'assets/app_icon.ico';
+}
 
-/// Whether there is somewhere to put a tray icon. Always true on Windows.
+/// Whether [trayIconAsset] is a macOS template image.
+bool get trayIconIsTemplate => Platform.isMacOS;
+
+/// Where the tray icon lives, for messages to the viewer.
+String get trayPlaceName => Platform.isMacOS ? 'menu bar' : 'notification area';
+
+/// Whether there is somewhere to put a tray icon. Always true on Windows and
+/// macOS (the menu bar).
 ///
 /// On Linux the icon is a StatusNotifierItem, which only shows when the
 /// desktop runs a StatusNotifierWatcher (KDE, most others; GNOME only with
