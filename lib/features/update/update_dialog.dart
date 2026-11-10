@@ -92,7 +92,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
             ],
             if (_error != null) ...[
               const SizedBox(height: 12),
-              Text(_error!, style: const TextStyle(color: ZipColors.retrying)),
+              Text(_error!, style: const TextStyle(color: ZipColors.warnText)),
             ],
           ],
         ),

@@ -86,6 +86,33 @@ flutter:
     - assets/app_icon.ico
     - assets/tray_macos.png
 
+  # Atkinson Hyperlegible Next and Mono (SIL OFL 1.1, see assets/fonts/OFL*.txt),
+  # static instances cut from the google/fonts variable TTFs.
+  fonts:
+    - family: AtkinsonNext
+      fonts:
+        - asset: assets/fonts/AtkinsonHyperlegibleNext-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/AtkinsonHyperlegibleNext-Italic.ttf
+          weight: 400
+          style: italic
+        - asset: assets/fonts/AtkinsonHyperlegibleNext-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/AtkinsonHyperlegibleNext-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/AtkinsonHyperlegibleNext-Bold.ttf
+          weight: 700
+    - family: AtkinsonMono
+      fonts:
+        - asset: assets/fonts/AtkinsonHyperlegibleMono-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/AtkinsonHyperlegibleMono-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/AtkinsonHyperlegibleMono-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/AtkinsonHyperlegibleMono-Bold.ttf
+          weight: 700
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

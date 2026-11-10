@@ -153,8 +153,11 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     }
     if (mounted) setState(() => _booting = false);
     // Debug builds only: open straight into a view, for testing from scripts.
-    if (kDebugMode && mounted && Platform.environment['ZIPTOP_START_VIEW'] == 'multiview') {
-      _showView(_View.multiview);
+    final startView = Platform.environment['ZIPTOP_START_VIEW'];
+    if (kDebugMode && mounted && startView != null) {
+      for (final view in _View.values) {
+        if (view.name == startView && view != _View.live) _showView(view);
+      }
     }
     // Debug builds only: record the current channel for this many seconds.
     final debugRecord = int.tryParse(Platform.environment['ZIPTOP_DEBUG_RECORD'] ?? '');
@@ -821,7 +824,13 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
                       onExit: (_) {
                         if (!_searchFocus.hasFocus) setState(() => _edgePanel = false);
                       },
-                      child: Material(elevation: 12, child: panel),
+                      child: DecoratedBox(
+                        decoration: const BoxDecoration(
+                          border: Border(right: BorderSide(color: ZipColors.lineHi)),
+                          boxShadow: ZipShadow.lg,
+                        ),
+                        child: Material(color: ZipColors.surface, child: panel),
+                      ),
                     ),
                   ),
                 ],
@@ -904,66 +913,103 @@ class _NavRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 60,
-      color: ZipColors.background,
-      padding: const EdgeInsets.symmetric(vertical: 12),
+      width: 64,
+      decoration: const BoxDecoration(
+        color: ZipColors.surface,
+        border: Border(right: BorderSide(color: ZipColors.line)),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 14),
       child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Image.asset('assets/icon.png', width: 36, height: 36),
-          ),
-          const SizedBox(height: 16),
-          IconButton(
+          Image.asset('assets/icon.png', width: 34, height: 34),
+          const SizedBox(height: 18),
+          _RailButton(
             tooltip: panelOpen ? 'Hide channels (Ctrl+B)' : 'Show channels (Ctrl+B)',
-            isSelected: panelOpen,
+            selected: panelOpen,
             onPressed: onTogglePanel,
-            icon: const Icon(Icons.live_tv_outlined),
-            selectedIcon: const Icon(Icons.live_tv, color: ZipColors.accent),
+            icon: Icons.live_tv_outlined,
+            selectedIcon: Icons.live_tv,
           ),
-          IconButton(
-            tooltip: 'TV Guide (G)',
-            isSelected: guideOpen,
+          _RailButton(
+            tooltip: 'Guide (G)',
+            selected: guideOpen,
             onPressed: onGuide,
-            icon: const Icon(Icons.calendar_view_week_outlined),
-            selectedIcon: const Icon(Icons.calendar_view_week, color: ZipColors.accent),
+            icon: Icons.calendar_view_week_outlined,
+            selectedIcon: Icons.calendar_view_week,
           ),
-          IconButton(
-            tooltip: 'Multiview (V)',
-            isSelected: multiviewOpen,
+          _RailButton(
+            tooltip: 'Multi-view (V)',
+            selected: multiviewOpen,
             onPressed: onMultiview,
-            icon: const Icon(Icons.grid_view_outlined),
-            selectedIcon: const Icon(Icons.grid_view, color: ZipColors.accent),
+            icon: Icons.grid_view_outlined,
+            selectedIcon: Icons.grid_view,
           ),
-          IconButton(
+          _RailButton(
             tooltip: recordingNow ? 'Recordings (recording now)' : 'Recordings',
-            isSelected: recordingsOpen,
+            selected: recordingsOpen,
             onPressed: onRecordings,
-            icon: Badge(
-              isLabelVisible: recordingNow,
-              backgroundColor: ZipColors.offline,
-              smallSize: 9,
-              child: const Icon(Icons.video_library_outlined),
-            ),
-            selectedIcon: Badge(
-              isLabelVisible: recordingNow,
-              backgroundColor: ZipColors.offline,
-              smallSize: 9,
-              child: const Icon(Icons.video_library, color: ZipColors.accent),
-            ),
+            icon: Icons.video_library_outlined,
+            selectedIcon: Icons.video_library,
+            dot: recordingNow,
           ),
-          IconButton(
+          _RailButton(
             tooltip: 'Search (Ctrl+F)',
             onPressed: onSearch,
-            icon: const Icon(Icons.search),
+            icon: Icons.search,
           ),
           const Spacer(),
-          IconButton(
+          _RailButton(
             tooltip: 'Settings',
             onPressed: onSettings,
-            icon: const Icon(Icons.settings_outlined),
+            icon: Icons.settings_outlined,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A rail destination: quiet icon that fills with the accent when selected.
+class _RailButton extends StatelessWidget {
+  const _RailButton({
+    required this.tooltip,
+    required this.onPressed,
+    required this.icon,
+    this.selectedIcon,
+    this.selected = false,
+    this.dot = false,
+  });
+
+  final String tooltip;
+  final VoidCallback onPressed;
+  final IconData icon;
+  final IconData? selectedIcon;
+  final bool selected;
+  final bool dot;
+
+  @override
+  Widget build(BuildContext context) {
+    final glyph = Icon(
+      selected ? (selectedIcon ?? icon) : icon,
+      size: 22,
+      color: selected ? ZipColors.onAccent : null,
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: IconButton(
+        tooltip: tooltip,
+        onPressed: onPressed,
+        style: IconButton.styleFrom(
+          fixedSize: const Size(44, 44),
+          backgroundColor: selected ? ZipColors.accent : Colors.transparent,
+          hoverColor: selected ? ZipColors.accentHi : ZipColors.hover,
+        ),
+        icon: Badge(
+          isLabelVisible: dot,
+          backgroundColor: ZipColors.danger,
+          smallSize: 9,
+          child: glyph,
+        ),
       ),
     );
   }

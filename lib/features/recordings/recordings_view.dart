@@ -5,6 +5,7 @@ import '../../core/platform/reveal.dart';
 import '../../dvr/dvr_service.dart';
 import '../../dvr/models.dart';
 import '../../theme.dart';
+import '../../ui/status_badge.dart';
 import '../guide/guide_view.dart' show formatClock;
 
 String formatBytes(int bytes) {
@@ -72,7 +73,7 @@ class RecordingsView extends StatelessWidget {
             child: Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  padding: const EdgeInsets.fromLTRB(20, 16, 16, 0),
                   child: Row(
                     children: [
                       Text('Recordings', style: Theme.of(context).textTheme.headlineSmall),
@@ -138,9 +139,9 @@ class RecordingsView extends StatelessWidget {
       );
     }
     return ListView.separated(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
       itemCount: items.length,
-      separatorBuilder: (_, _) => const Divider(height: 1, indent: 16, endIndent: 16),
+      separatorBuilder: (_, _) => const Divider(height: 1, indent: 64, endIndent: 12),
       itemBuilder: (context, index) => tile(items[index]),
     );
   }
@@ -160,16 +161,22 @@ class _UpcomingTile extends StatelessWidget {
     final when = '${formatDay(r.plannedStart)}  ${formatClock(r.plannedStart)} – '
         '${formatClock(r.plannedStop)}';
     return ListTile(
-      leading: Icon(
+      leading: StatusIcon(
         running ? Icons.fiber_manual_record : Icons.schedule,
-        color: running ? ZipColors.offline : ZipColors.accent,
+        tone: running ? BadgeTone.danger : BadgeTone.accent,
       ),
-      title: Text(r.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: _TitleRow(
+        r.title,
+        badges: [
+          if (running) const StatusBadge('Recording', tone: BadgeTone.danger),
+          if (r.seriesRuleId != null) const StatusBadge('Series', tone: BadgeTone.info),
+        ],
+      ),
       subtitle: Text(
         running
-            ? '${r.streamName}  ·  Recording, ${formatBytes(r.bytesWritten)} so far  ·  '
+            ? '${r.streamName}  ·  ${formatBytes(r.bytesWritten)} so far  ·  '
                 'ends ${formatClock(r.plannedStop)}'
-            : '${r.streamName}  ·  $when${r.seriesRuleId == null ? '' : '  ·  Series'}',
+            : '${r.streamName}  ·  $when',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
@@ -181,7 +188,7 @@ class _UpcomingTile extends StatelessWidget {
               onPressed: () => onPlay(r, fromStart: true),
               child: const Text('Watch so far'),
             ),
-          TextButton(
+          OutlinedButton(
             onPressed: () => dvr.cancel(r.id),
             child: Text(running ? 'Stop' : 'Cancel'),
           ),
@@ -239,19 +246,25 @@ class _RecordedTile extends StatelessWidget {
     ].join('  ·  ');
 
     return ListTile(
-      leading: Icon(
+      leading: StatusIcon(
         failed
             ? Icons.error_outline
             : partial
                 ? Icons.warning_amber_rounded
-                : Icons.check_circle_outline,
-        color: failed
-            ? ZipColors.offline
+                : Icons.check,
+        tone: failed
+            ? BadgeTone.danger
             : partial
-                ? ZipColors.retrying
-                : ZipColors.live,
+                ? BadgeTone.warn
+                : BadgeTone.success,
       ),
-      title: Text(r.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: _TitleRow(
+        r.title,
+        badges: [
+          if (failed) const StatusBadge('Failed', tone: BadgeTone.danger),
+          if (partial) const StatusBadge('Partial', tone: BadgeTone.warn),
+        ],
+      ),
       subtitle: Text(
         failed || partial ? '$details\n${describeOutcome(r)}' : details,
         maxLines: 2,
@@ -262,10 +275,12 @@ class _RecordedTile extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (r.hasPlayableFile) ...[
-            FilledButton.tonal(
+            FilledButton.icon(
               onPressed: () => onPlay(r),
-              child: Text(r.resumePositionMs > 0 ? 'Resume' : 'Play'),
+              icon: const Icon(Icons.play_arrow_rounded, size: 18),
+              label: Text(r.resumePositionMs > 0 ? 'Resume' : 'Play'),
             ),
+            const SizedBox(width: 4),
             if (r.resumePositionMs > 0)
               TextButton(
                 onPressed: () => onPlay(r, fromStart: true),
@@ -300,14 +315,21 @@ class _SeriesTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheduled = dvr.store.scheduled.where((r) => r.seriesRuleId == rule.id).length;
     return ListTile(
-      leading: const Icon(Icons.repeat, color: ZipColors.accent),
-      title: Text(rule.displayTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+      leading: StatusIcon(
+        Icons.repeat,
+        tone: rule.enabled ? BadgeTone.accent : BadgeTone.neutral,
+      ),
+      title: _TitleRow(
+        rule.displayTitle,
+        badges: [
+          if (!rule.enabled) const StatusBadge('Paused'),
+        ],
+      ),
       subtitle: Text(
         [
           rule.streamName ?? 'Any channel',
           '$scheduled scheduled',
           rule.keepMax > 0 ? 'keeps the newest ${rule.keepMax}' : 'keeps all',
-          if (!rule.enabled) 'paused',
         ].join('  ·  '),
       ),
       trailing: Row(
@@ -349,7 +371,7 @@ class _SettingsTab extends StatelessWidget {
       if (!DvrSettings.paddingPresets.contains(padding)) padding,
     ];
     return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
       children: [
         ListTile(
           leading: const Icon(Icons.folder_outlined),
@@ -363,7 +385,7 @@ class _SettingsTab extends StatelessWidget {
                   onPressed: () => store.saveSettings(settings.copyWith(storageDir: null)),
                   child: const Text('Use default'),
                 ),
-              FilledButton.tonal(
+              OutlinedButton(
                 onPressed: () async {
                   final picked = await getDirectoryPath(
                     initialDirectory: dvr.directory.existsSync() ? dvr.directory.path : null,
@@ -383,6 +405,9 @@ class _SettingsTab extends StatelessWidget {
           title: const Text('Quality'),
           trailing: DropdownButton<VariantPreference>(
             value: settings.variantPreference,
+            underline: const SizedBox.shrink(),
+            borderRadius: ZipRadius.mdAll,
+            dropdownColor: ZipColors.surface,
             onChanged: (value) {
               if (value != null) store.saveSettings(settings.copyWith(variantPreference: value));
             },
@@ -398,6 +423,9 @@ class _SettingsTab extends StatelessWidget {
           subtitle: const Text('Start early and finish late, in case the schedule slips'),
           trailing: DropdownButton<(int, int)>(
             value: padding,
+            underline: const SizedBox.shrink(),
+            borderRadius: ZipRadius.mdAll,
+            dropdownColor: ZipColors.surface,
             onChanged: (value) {
               if (value == null) return;
               store.saveSettings(
@@ -437,6 +465,31 @@ class _SettingsTab extends StatelessWidget {
             style: TextStyle(color: ZipColors.textMuted),
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// A list title with status pills after it.
+class _TitleRow extends StatelessWidget {
+  const _TitleRow(this.title, {this.badges = const []});
+
+  final String title;
+  final List<Widget> badges;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Flexible(
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+        for (final b in badges) ...[const SizedBox(width: 8), b],
       ],
     );
   }

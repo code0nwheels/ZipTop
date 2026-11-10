@@ -104,7 +104,7 @@ Build-time options, passed as `--dart-define=NAME=value`:
 | `UPDATE_REPO` | `code0nwheels/ZipTop` | GitHub repository whose releases are offered as updates |
 
 Debug builds also read two environment variables, for testing from scripts:
-`ZIPTOP_START_VIEW=multiview` and `ZIPTOP_DEBUG_RECORD=<seconds>`.
+`ZIPTOP_START_VIEW=guide|multiview|recordings` and `ZIPTOP_DEBUG_RECORD=<seconds>`.
 
 ## Versions and releases
 
