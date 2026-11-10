@@ -90,7 +90,10 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.zipstreams" "\0"
-            VALUE "FileDescription", "ziptop" "\0"
+            // CompanyName and ProductName below decide where settings and the
+            // recordings list are stored (%APPDATA%\<company>\<product>).
+            // Changing either would orphan every user's data.
+            VALUE "FileDescription", "ZipTop" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "ziptop" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.zipstreams. All rights reserved." "\0"

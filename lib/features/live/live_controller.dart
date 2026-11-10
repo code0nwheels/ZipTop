@@ -1,18 +1,19 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart' hide Category;
 
 import '../../core/models/catalog.dart';
 import '../../core/session/playback_session.dart';
 import '../../core/stores/catalog_store.dart';
+import '../../core/stores/settings_store.dart';
 import '../../player/mpv_player.dart';
 
 /// Joins the catalogue, the server session and mpv for the main player:
-/// tuning, zapping, and recovering when playback dies.
+/// tuning, zapping, number entry, and recovering when playback dies.
 class LiveController extends ChangeNotifier {
   LiveController({
     required this.catalog,
+    required this.settings,
     required this.session,
     required this.player,
   }) {
@@ -27,13 +28,16 @@ class LiveController extends ChangeNotifier {
     ];
   }
 
-  static const _lastChannelKey = 'last_stream_id';
   static const unsupportedMessage =
       "This channel uses a stream format (DASH) that ZipTop can't play yet.";
+  static const maxNumberDigits = 4;
+  static const numberCommitDelay = Duration(seconds: 2);
+  static const numberErrorFlash = Duration(milliseconds: 700);
   static const _errorGrace = Duration(seconds: 4);
   static const _stallLimit = Duration(seconds: 30);
 
   final CatalogStore catalog;
+  final SettingsStore settings;
   final PlaybackSession session;
   final MpvPlayer player;
 
@@ -42,9 +46,15 @@ class LiveController extends ChangeNotifier {
 
   Channel? _current;
   Channel? _previous;
+  List<String>? _scopeIds;
+  String? _scopeName;
   String? _playingUrl;
   String? _failure;
   Duration _position = Duration.zero;
+  String _digits = '';
+  bool _digitsInvalid = false;
+  double _unmutedVolume = 100;
+  Timer? _digitsTimer;
   Timer? _retryTimer;
   Timer? _errorTimer;
   Timer? _stallTimer;
@@ -57,8 +67,39 @@ class LiveController extends ChangeNotifier {
   /// Set when retries ran out; cleared by [retryNow] or tuning.
   String? get failure => _failure;
 
-  /// Loads the catalogue and tunes the last channel watched, or the first.
-  Future<void> boot() async {
+  /// Digits typed so far for a channel number, empty when not entering one.
+  String get numberEntry => _digits;
+
+  /// True briefly after a number that matches no channel.
+  bool get numberEntryInvalid => _digitsInvalid;
+
+  /// The row Up/Down zaps within, or null for All channels.
+  String? get scopeName => _scopeName;
+
+  /// Channels the viewer recently tuned here, most recent first.
+  List<Channel> get recents => [
+        for (final id in settings.recentIds)
+          if (catalog.channelsById[id] != null) catalog.channelsById[id]!,
+      ];
+
+  /// What Up/Down moves through: the row last tuned from, else All channels.
+  List<Channel> get zapChannels {
+    final ids = _scopeIds;
+    if (ids != null) {
+      final scoped = [
+        for (final id in ids)
+          if (catalog.channelsById[id] != null) catalog.channelsById[id]!,
+      ];
+      if (scoped.isNotEmpty) return scoped;
+    }
+    return catalog.allChannels;
+  }
+
+  /// Loads the catalogue and, if the viewer wants it, resumes the last channel.
+  ///
+  /// With [autoplay] false nothing is tuned, for a start hidden in the
+  /// notification area.
+  Future<void> boot({bool autoplay = true}) async {
     await catalog.refresh();
     unawaited(catalog.refreshLiveIfStale());
     _pollTimer?.cancel();
@@ -66,16 +107,31 @@ class LiveController extends ChangeNotifier {
       unawaited(catalog.refreshLiveIfStale());
       unawaited(catalog.refreshIfStale());
     });
+    unawaited(player.player.setVolume(settings.volume));
 
+    if (!autoplay) return;
+    await _tuneLast();
+  }
+
+  Future<void> _tuneLast() async {
+    if (!settings.playLastOnStart) return;
     final channels = catalog.allChannels;
     if (channels.isEmpty) return;
-    final prefs = await SharedPreferences.getInstance();
-    final last = catalog.channelsById[prefs.getString(_lastChannelKey)];
+    final last = catalog.channelsById[settings.lastChannelId];
     await tune(last ?? channels.first);
   }
 
-  Future<void> tune(Channel channel) async {
-    if (_current?.id == channel.id && session.phase == SessionPhase.playing) return;
+  /// Tunes [channel]. When it was picked from a row, pass that row as [scope]
+  /// so Up/Down stay inside it.
+  Future<void> tune(Channel channel, {List<Channel>? scope, String? scopeName}) async {
+    if (scope != null) {
+      _scopeIds = [for (final c in scope) c.id];
+      _scopeName = scopeName;
+    }
+    if (_current?.id == channel.id && session.phase == SessionPhase.playing) {
+      notifyListeners();
+      return;
+    }
     if (_current != null && _current!.id != channel.id) _previous = _current;
     _current = channel;
     _failure = null;
@@ -84,22 +140,81 @@ class LiveController extends ChangeNotifier {
     _playingUrl = null;
     notifyListeners();
     unawaited(player.stop());
-    unawaited(_remember(channel.id));
+    settings.rememberChannel(channel.id);
     await session.open(channel.id, iptv: channel.isIptv);
   }
 
-  /// Moves [step] channels through All channels, wrapping at the ends.
+  /// Moves [step] channels through [zapChannels], wrapping at the ends.
   Future<void> zap(int step) async {
-    final channels = catalog.allChannels;
+    final channels = zapChannels;
     if (channels.isEmpty) return;
     final index = channels.indexWhere((c) => c.id == _current?.id);
-    final next = channels[(index + step) % channels.length];
+    final next = index < 0 && step < 0
+        ? channels.last
+        : channels[(index + step) % channels.length];
     await tune(next);
   }
 
   Future<void> tunePrevious() async {
     final previous = _previous;
     if (previous != null) await tune(previous);
+  }
+
+  /// Adds a digit to the channel number being typed. It commits by itself
+  /// after a pause, or at once with [commitNumber].
+  void typeDigit(int digit) {
+    if (_digitsInvalid) return;
+    if (_digits.length >= maxNumberDigits) return;
+    _digits += '$digit';
+    _digitsTimer?.cancel();
+    _digitsTimer = Timer(numberCommitDelay, commitNumber);
+    notifyListeners();
+  }
+
+  void commitNumber() {
+    _digitsTimer?.cancel();
+    if (_digits.isEmpty || _digitsInvalid) return;
+    final number = int.tryParse(_digits);
+    Channel? match;
+    for (final channel in catalog.allChannels) {
+      if (channel.number == number) {
+        match = channel;
+        break;
+      }
+    }
+    if (match == null) {
+      _digitsInvalid = true;
+      notifyListeners();
+      _digitsTimer = Timer(numberErrorFlash, cancelNumber);
+      return;
+    }
+    _digits = '';
+    // A typed number can be anywhere, so zapping widens back to every channel.
+    _scopeIds = null;
+    _scopeName = null;
+    unawaited(tune(match));
+  }
+
+  void cancelNumber() {
+    _digitsTimer?.cancel();
+    if (_digits.isEmpty && !_digitsInvalid) return;
+    _digits = '';
+    _digitsInvalid = false;
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> setVolume(double volume) async {
+    settings.volume = volume;
+    await player.player.setVolume(settings.volume);
+  }
+
+  Future<void> toggleMute() async {
+    if (settings.volume > 0) {
+      _unmutedVolume = settings.volume;
+      await setVolume(0);
+    } else {
+      await setVolume(_unmutedVolume > 0 ? _unmutedVolume : 100);
+    }
   }
 
   /// Manual retry from the error state.
@@ -116,6 +231,18 @@ class LiveController extends ChangeNotifier {
       await session.open(channel.id, iptv: channel.isIptv);
     }
   }
+
+  /// Stops playback and gives the server slot back, keeping the channel so
+  /// [resume] can pick it up again (while multiview has the screen).
+  Future<void> suspend() async {
+    _cancelRecovery();
+    cancelNumber();
+    _playingUrl = null;
+    unawaited(player.stop());
+    await session.close();
+  }
+
+  Future<void> resume() => _current == null ? _tuneLast() : retryNow();
 
   /// Stops playback and releases the server slot (sign-out, app exit).
   Future<void> shutdown() async {
@@ -181,13 +308,16 @@ class LiveController extends ChangeNotifier {
   }
 
   void _onError(String message) {
-    if (_playingUrl == null) return;
+    if (_playingUrl == null || !isReloadableError(message)) return;
     // mpv also reports recoverable hiccups here. Only treat it as fatal if
     // playback has not moved on a few seconds later.
     final mark = _position;
     _errorTimer?.cancel();
     _errorTimer = Timer(_errorGrace, () {
-      if (_position == mark) _recover(_retry.nextAfterError());
+      // Still loading is the stall timer's business, not an error.
+      if (_position == mark && !player.player.state.buffering) {
+        _recover(_retry.nextAfterError());
+      }
     });
   }
 
@@ -215,16 +345,12 @@ class LiveController extends ChangeNotifier {
     _stallTimer?.cancel();
   }
 
-  Future<void> _remember(String streamId) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_lastChannelKey, streamId);
-  }
-
   @override
   void dispose() {
     _disposed = true;
     _cancelRecovery();
     _pollTimer?.cancel();
+    _digitsTimer?.cancel();
     session.removeListener(_onSession);
     for (final sub in _subs) {
       unawaited(sub.cancel());

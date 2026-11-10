@@ -1,0 +1,80 @@
+name: Build Windows installer
+
+# Every merge to main produces ZipTop-Setup-<version>.exe as a downloadable
+# artifact of the run. It can also be started by hand from the Actions tab.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer merge makes an older, still-running build pointless.
+concurrency:
+  group: installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installer:
+    name: Test and package
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          # Keep in step with the version used for local builds.
+          flutter-version: '3.47.9'
+          channel: stable
+          cache: true
+
+      # windows/CMakeLists.txt downloads a pinned libmpv (~32 MB) into
+      # windows/third_party when it is missing; keep it between runs.
+      - name: Cache libmpv
+        uses: actions/cache@v4
+        with:
+          path: windows/third_party/libmpv
+          key: libmpv-${{ hashFiles('windows/CMakeLists.txt') }}
+
+      - name: Get packages
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (Test-Path $iscc) {
+            Write-Host "Inno Setup already installed"
+          } else {
+            choco install innosetup --yes --no-progress
+          }
+
+      - name: Build release and installer
+        shell: pwsh
+        run: ./tool/build_installer.ps1
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $line = Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)' | Select-Object -First 1
+          "version=$($line.Matches[0].Groups[1].Value)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZipTop-Setup-${{ steps.version.outputs.version }}-${{ github.sha }}
+          path: installer/output/ZipTop-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 30

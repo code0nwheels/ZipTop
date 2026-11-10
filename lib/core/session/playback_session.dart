@@ -5,6 +5,28 @@ import 'package:flutter/foundation.dart';
 import '../api/streams_api.dart';
 import '../models/playback.dart';
 
+/// Counts who is using each stream in this app: the viewer, multiview tiles
+/// and recordings. They share one server-side session per stream, so the
+/// stream may only be left when the last of them is done with it.
+class StreamSlots {
+  final _holds = <String, int>{};
+
+  bool isHeld(String streamId) => (_holds[streamId] ?? 0) > 0;
+
+  void acquire(String streamId) => _holds[streamId] = (_holds[streamId] ?? 0) + 1;
+
+  /// Returns true when nobody holds the stream any more.
+  bool release(String streamId) {
+    final left = (_holds[streamId] ?? 0) - 1;
+    if (left > 0) {
+      _holds[streamId] = left;
+      return false;
+    }
+    _holds.remove(streamId);
+    return true;
+  }
+}
+
 enum SessionPhase {
   /// Nothing open.
   idle,
@@ -35,7 +57,17 @@ enum SessionPhase {
 ///
 /// Used by the main player, each multiview tile and each recording.
 class PlaybackSession extends ChangeNotifier {
-  PlaybackSession(this._api);
+  PlaybackSession(this._api, {this.slots, this.autoExtendWatch = false});
+
+  /// Shared with every other session in the app, when given.
+  final StreamSlots? slots;
+
+  /// Answer "are you still watching?" automatically. For unattended
+  /// recordings, which have nobody to ask.
+  final bool autoExtendWatch;
+
+  static const maxKickRetries = 2;
+  static const kickRetryDelay = Duration(seconds: 2);
 
   static const heartbeatInterval = Duration(seconds: 20);
   static const startWait = Duration(seconds: 2);
@@ -51,6 +83,8 @@ class PlaybackSession extends ChangeNotifier {
   String? _url;
   String? _message;
   int? _warningSeconds;
+  String? _held;
+  int _kickRetries = 0;
 
   // Bumped whenever the current pipeline or heartbeat loop must stop.
   int _generation = 0;
@@ -74,11 +108,13 @@ class PlaybackSession extends ChangeNotifier {
   Future<void> open(String streamId, {required bool iptv}) async {
     final generation = _begin();
     final previous = _streamId;
+    final leavePrevious = previous != null && previous != streamId && _drop(previous);
     _streamId = streamId;
     _iptv = iptv;
+    _hold(streamId);
     _set(SessionPhase.preparing);
 
-    if (previous != null && previous != streamId) {
+    if (previous != null && leavePrevious) {
       try {
         await _api.leave(previous).timeout(leaveTimeout);
       } catch (_) {
@@ -96,6 +132,7 @@ class PlaybackSession extends ChangeNotifier {
     final streamId = _streamId;
     if (streamId == null) return;
     final generation = _begin();
+    _hold(streamId);
     _set(SessionPhase.preparing);
     await _prepare(generation, streamId, _iptv);
   }
@@ -116,6 +153,9 @@ class PlaybackSession extends ChangeNotifier {
     _streamId = null;
     _set(SessionPhase.idle);
     if (streamId == null) return;
+    // Someone else in the app is still on this stream; leaving would end it
+    // for them too.
+    if (!_drop(streamId)) return;
     try {
       await _api.leave(streamId);
       await _api.endSession(streamId);
@@ -129,6 +169,11 @@ class PlaybackSession extends ChangeNotifier {
     _disposed = true;
     _cancelTimers();
     _generation++;
+    final held = _held;
+    if (held != null) {
+      _held = null;
+      slots?.release(held);
+    }
     super.dispose();
   }
 
@@ -179,13 +224,23 @@ class PlaybackSession extends ChangeNotifier {
       }
       if (stale()) return;
       if (outcome is HeartbeatKicked && outcome.reason == KickReason.watchTimeExceeded) {
-        _watchTimeUp(outcome.message);
-        return;
+        if (!autoExtendWatch) {
+          _watchTimeUp(outcome.message);
+          return;
+        }
+        try {
+          await _api.extendWatch();
+        } catch (_) {
+          // The heartbeat loop will find out soon enough.
+        }
+        if (stale()) return;
       }
 
       _url = url;
       _set(SessionPhase.playing);
-      if (outcome is HeartbeatWarn) {
+      if (outcome is HeartbeatWarn && autoExtendWatch) {
+        _quietly(_api.extendWatch());
+      } else if (outcome is HeartbeatWarn) {
         final seconds = outcome.secondsRemaining ?? 0;
         _startCountdown(seconds);
         _scheduleDeadline(seconds);
@@ -217,12 +272,23 @@ class PlaybackSession extends ChangeNotifier {
         case HeartbeatOk():
           // The window is account-wide, so Ok can also mean the viewer
           // answered the prompt on another device.
+          _kickRetries = 0;
           _deadlineTimer?.cancel();
           _countdownTimer?.cancel();
           if (_warningSeconds != null) {
             _warningSeconds = null;
             _notify();
           }
+        case HeartbeatWarn() when autoExtendWatch:
+          _quietly(_api.extendWatch());
+        case HeartbeatKicked(:final reason)
+            when autoExtendWatch &&
+                reason == KickReason.watchTimeExceeded &&
+                _kickRetries < maxKickRetries:
+          // Acknowledge the window and see whether the server takes us back.
+          _kickRetries++;
+          _quietly(_api.extendWatch());
+          next = kickRetryDelay;
         case HeartbeatWarn(:final secondsRemaining):
           final seconds = secondsRemaining ?? 20;
           _startCountdown(seconds);
@@ -285,8 +351,23 @@ class PlaybackSession extends ChangeNotifier {
     _begin();
     final streamId = _streamId;
     _streamId = null;
-    if (streamId != null) _quietly(_api.leave(streamId));
+    if (streamId != null && _drop(streamId)) _quietly(_api.leave(streamId));
     _set(SessionPhase.watchTimeUp, message: message);
+  }
+
+  void _hold(String streamId) {
+    if (_held == streamId) return;
+    slots?.acquire(streamId);
+    _held = streamId;
+  }
+
+  /// Gives up this session's hold on [streamId]. True when the stream should
+  /// now be left on the server: nobody else in the app is using it.
+  bool _drop(String streamId) {
+    final slots = this.slots;
+    if (_held != streamId) return slots == null || !slots.isHeld(streamId);
+    _held = null;
+    return slots == null || slots.release(streamId);
   }
 
   /// Stops whatever is running and returns the new generation.
