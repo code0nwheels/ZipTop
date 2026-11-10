@@ -1,8 +1,7 @@
-import 'dart:io';
-
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/platform/reveal.dart';
 import '../../dvr/dvr_service.dart';
 import '../../dvr/models.dart';
 import '../../theme.dart';
@@ -274,7 +273,7 @@ class _RecordedTile extends StatelessWidget {
               ),
             IconButton(
               tooltip: 'Show in folder',
-              onPressed: () => Process.run('explorer.exe', ['/select,', r.filePath!]),
+              onPressed: () => revealInFolder(r.filePath!),
               icon: const Icon(Icons.folder_open, size: 20),
             ),
           ],

@@ -57,6 +57,20 @@ class DvrService extends ChangeNotifier {
   Directory get directory => Directory(store.settings.storageDir ?? defaultDirectory());
 
   static String defaultDirectory() {
+    if (Platform.isLinux) {
+      final env = Platform.environment;
+      final home = env['HOME'] ?? '.';
+      final configHome = env['XDG_CONFIG_HOME'];
+      final configDir =
+          configHome != null && configHome.isNotEmpty ? configHome : p.join(home, '.config');
+      String? userDirs;
+      try {
+        userDirs = File(p.join(configDir, 'user-dirs.dirs')).readAsStringSync();
+      } catch (_) {}
+      final videos = (userDirs == null ? null : xdgVideosDir(userDirs, home: home)) ??
+          p.join(home, 'Videos');
+      return p.join(videos, 'ZipTop');
+    }
     final home = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
     return p.join(home, 'Videos', 'ZipTop');
   }
@@ -385,4 +399,28 @@ class DvrService extends ChangeNotifier {
     }
     super.dispose();
   }
+}
+
+/// The `XDG_VIDEOS_DIR` entry of a `user-dirs.dirs` file, with `$HOME`
+/// expanded, or null when it is missing or points at the home folder itself
+/// (which is how xdg-user-dirs marks a disabled folder).
+String? xdgVideosDir(String userDirs, {required String home}) {
+  for (final raw in userDirs.split('\n')) {
+    final line = raw.trim();
+    if (!line.startsWith('XDG_VIDEOS_DIR=')) continue;
+    var value = line.substring('XDG_VIDEOS_DIR='.length).trim();
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+      value = value.substring(1, value.length - 1);
+    }
+    if (value.startsWith(r'$HOME')) {
+      value = home + value.substring(r'$HOME'.length);
+    } else if (value.startsWith(r'${HOME}')) {
+      value = home + value.substring(r'${HOME}'.length);
+    }
+    if (value.isEmpty || !value.startsWith('/')) return null;
+    final normalized = value.replaceAll(RegExp(r'/+$'), '');
+    if (normalized.isEmpty || normalized == home.replaceAll(RegExp(r'/+$'), '')) return null;
+    return normalized;
+  }
+  return null;
 }

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -26,7 +28,7 @@ class SettingsDialog extends StatefulWidget {
   final CatalogStore catalog;
   final AuthApi authApi;
   final UpdateService updates;
-  final StartupRegistration startup;
+  final Autostart startup;
 
   /// An update was found; the caller offers it.
   final ValueChanged<UpdateInfo> onUpdate;
@@ -36,10 +38,14 @@ class SettingsDialog extends StatefulWidget {
   State<SettingsDialog> createState() => _SettingsDialogState();
 }
 
+/// What the start-at-sign-in switch is called on this platform.
+String get _startAtSignInLabel => Platform.isLinux ? 'Start when I sign in' : 'Start with Windows';
+String get _startUpSettingName => Platform.isLinux ? 'start-at-sign-in' : 'Windows start-up';
+
 class _SettingsDialogState extends State<SettingsDialog> {
   late final Future<AccountInfo> _account = widget.authApi.accountInfo();
   late final Future<PackageInfo> _package = PackageInfo.fromPlatform();
-  bool? _startWithWindows;
+  bool? _startAtSignIn;
   bool _checking = false;
   String? _updateStatus;
 
@@ -47,17 +53,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
   void initState() {
     super.initState();
     widget.startup.isEnabled().then((enabled) {
-      if (mounted) setState(() => _startWithWindows = enabled);
+      if (mounted) setState(() => _startAtSignIn = enabled);
     });
   }
 
-  Future<void> _setStartWithWindows(bool enabled) async {
+  Future<void> _setStartAtSignIn(bool enabled) async {
     final ok = await widget.startup.setEnabled(enabled);
     if (!mounted) return;
-    setState(() => _startWithWindows = ok ? enabled : _startWithWindows);
+    setState(() => _startAtSignIn = ok ? enabled : _startAtSignIn);
     if (!ok) {
       ScaffoldMessenger.maybeOf(context)
-          ?.showSnackBar(const SnackBar(content: Text("Couldn't change the Windows start-up setting")));
+          ?.showSnackBar(SnackBar(content: Text("Couldn't change the $_startUpSettingName setting")));
     }
   }
 
@@ -171,13 +177,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               const _Section('This computer'),
               SwitchListTile(
-                title: const Text('Start with Windows'),
+                title: Text(_startAtSignInLabel),
                 subtitle: const Text(
                   'Open ZipTop in the notification area when you sign in, so scheduled '
                   'recordings are not missed',
                 ),
-                value: _startWithWindows ?? false,
-                onChanged: _startWithWindows == null ? null : _setStartWithWindows,
+                value: _startAtSignIn ?? false,
+                onChanged: _startAtSignIn == null ? null : _setStartAtSignIn,
               ),
               ListTile(
                 leading: const Icon(Icons.system_update_alt),
