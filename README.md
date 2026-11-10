@@ -6,6 +6,10 @@ guide, multiview and DVR. Built with Flutter, playing through mpv (libmpv via me
 It is the desktop counterpart of the Android TV app and talks to the same
 backend with the same device-code pairing.
 
+**Just want to use it?** See [How to install ZipTop](docs/INSTALL.md), a
+step-by-step guide for Windows, Mac and Linux. The rest of this page is for
+developers.
+
 ## Building
 
 ### Windows
