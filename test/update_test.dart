@@ -5,10 +5,6 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ziptop/core/api/api_client.dart';
-import 'package:ziptop/core/api/api_config.dart';
-import 'package:ziptop/core/auth/auth_events.dart';
-import 'package:ziptop/core/auth/token_store.dart';
 import 'package:ziptop/core/platform/startup.dart';
 import 'package:ziptop/core/stores/settings_store.dart';
 import 'package:ziptop/features/update/update_service.dart';
@@ -17,7 +13,7 @@ class OneAnswer implements HttpClientAdapter {
   OneAnswer(this.status, this.body);
   int status;
   Object? body;
-  final paths = <String>[];
+  final requests = <RequestOptions>[];
 
   @override
   Future<ResponseBody> fetch(
@@ -25,18 +21,41 @@ class OneAnswer implements HttpClientAdapter {
     Stream<Uint8List>? requestStream,
     Future<void>? cancelFuture,
   ) async {
-    paths.add(options.uri.path);
+    requests.add(options);
     return ResponseBody.fromString(
-      body == null ? 'not found' : jsonEncode(body),
+      body == null ? '{"message":"Not Found"}' : jsonEncode(body),
       status,
       headers: {
-        Headers.contentTypeHeader: [body == null ? 'text/plain' : Headers.jsonContentType],
+        Headers.contentTypeHeader: [Headers.jsonContentType],
       },
     );
   }
 
   @override
   void close({bool force = false}) {}
+}
+
+/// What GitHub's latest-release endpoint answers, trimmed to what is read.
+Map<String, Object?> release(
+  String tag, {
+  bool draft = false,
+  bool prerelease = false,
+  List<String> assets = const ['ZipTop-Setup-{v}.exe'],
+}) {
+  final v = tag.replaceFirst('v', '');
+  return {
+    'tag_name': tag,
+    'draft': draft,
+    'prerelease': prerelease,
+    'assets': [
+      for (final name in assets)
+        {
+          'name': name.replaceAll('{v}', v),
+          'browser_download_url':
+              'https://github.com/code0nwheels/ZipTop/releases/download/$tag/${name.replaceAll('{v}', v)}',
+        },
+    ],
+  };
 }
 
 void main() {
@@ -49,6 +68,10 @@ void main() {
     expect(isNewerVersion('1.2', '1.2.0'), isFalse);
     expect(isNewerVersion('1.1.9', '1.2.0'), isFalse);
     expect(isNewerVersion('garbage', '1.0.0'), isFalse);
+    // A test build comes before its release, and after the one before.
+    expect(isNewerVersion('1.2.1', '1.2.1-dev.57'), isTrue);
+    expect(isNewerVersion('1.2.0', '1.2.1-dev.57'), isFalse);
+    expect(isNewerVersion('1.2.1-dev.60', '1.2.1-dev.57'), isFalse);
   });
 
   group('UpdateService', () {
@@ -61,49 +84,56 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       settings = await SettingsStore.load();
       now = DateTime(2026, 5, 1, 12);
-      adapter = OneAnswer(200, {
-        'version': '1.3.0',
-        'download_url': '/downloads/ZipTop-Setup.exe',
-        'available': true,
-      });
-      final config = ApiConfig(primary: 'https://a.example/', fallback: 'https://b.example/');
+      adapter = OneAnswer(200, release('v1.3.0'));
       service = UpdateService(
-        client: ApiClient(
-          config: config,
-          tokens: MemoryTokenStore('tok'),
-          events: AuthEvents(),
-          dio: Dio()..httpClientAdapter = adapter,
-        ),
-        config: config,
         settings: settings,
         currentVersion: '1.2.0',
+        http: Dio()..httpClientAdapter = adapter,
         clock: () => now,
       );
     });
 
-    test('offers a newer version with an absolute download URL', () async {
+    test('offers a newer GitHub release and its installer', () async {
       final update = await service.check();
-      expect(adapter.paths.single, '/desktop/version');
+      final request = adapter.requests.single;
+      expect(request.uri.toString(), UpdateService.latestReleaseUrl);
+      expect(request.uri.host, 'api.github.com');
+      expect(request.headers['User-Agent'], 'ZipTop/1.2.0');
       expect(update!.version, '1.3.0');
-      expect(update.downloadUrl, 'https://a.example/downloads/ZipTop-Setup.exe');
+      expect(
+        update.downloadUrl,
+        'https://github.com/code0nwheels/ZipTop/releases/download/v1.3.0/ZipTop-Setup-1.3.0.exe',
+      );
       expect(settings.lastUpdateCheck, now);
     });
 
-    test('nothing to offer when current, older or marked unavailable', () async {
-      adapter.body = {'version': '1.2.0', 'download_url': '/x.exe', 'available': true};
-      expect(await service.check(), isNull);
-      adapter.body = {'version': '1.0.0', 'download_url': '/x.exe', 'available': true};
-      expect(await service.check(), isNull);
-      adapter.body = {'version': '9.0.0', 'download_url': '/x.exe', 'available': false};
-      expect(await service.check(), isNull);
+    test('picks the installer out of other assets', () async {
+      adapter.body = release('v1.3.0', assets: ['notes.txt', 'ZipTop-Setup-{v}.exe']);
+      expect((await service.check())!.downloadUrl, endsWith('/ZipTop-Setup-1.3.0.exe'));
     });
 
-    test('a server without the endpoint is an error for a manual check, silence for auto', () async {
+    test('nothing to offer when current, older, a draft, a pre-release or missing its installer',
+        () async {
+      for (final body in [
+        release('v1.2.0'),
+        release('v1.0.0'),
+        release('v9.0.0', draft: true),
+        release('v9.0.0', prerelease: true),
+        release('v9.0.0', assets: ['notes.txt']),
+      ]) {
+        adapter.body = body;
+        expect(await service.check(), isNull, reason: jsonEncode(body));
+      }
+    });
+
+    test('no releases, or a private repository, is an error for a manual check and silence for auto',
+        () async {
       adapter
         ..status = 404
         ..body = null;
       await expectLater(service.check(), throwsStateError);
       expect(await service.autoCheck(), isNull);
+      expect(settings.lastUpdateCheck, isNull);
     });
 
     test('automatic checks are rate limited and respect "Later"', () async {
@@ -112,14 +142,14 @@ void main() {
 
       now = now.add(const Duration(hours: 1));
       expect(await service.autoCheck(), isNull, reason: 'checked an hour ago');
-      expect(adapter.paths, hasLength(1));
+      expect(adapter.requests, hasLength(1));
 
       service.dismiss(first);
       now = now.add(const Duration(hours: 7));
       expect(await service.autoCheck(), isNull, reason: 'the viewer said later');
-      expect(adapter.paths, hasLength(2));
+      expect(adapter.requests, hasLength(2));
 
-      adapter.body = {'version': '1.4.0', 'download_url': '/x.exe', 'available': true};
+      adapter.body = release('v1.4.0');
       now = now.add(const Duration(hours: 7));
       expect((await service.autoCheck())!.version, '1.4.0');
     });

@@ -1,14 +1,18 @@
 ; ZipTop Windows installer (Inno Setup 6).
 ;
 ; Build with tool\build_installer.ps1, which makes the release build, adds
-; the Visual C++ runtime DLLs and passes the version in:
-;   ISCC /DAppVersion=1.0.0 installer\ziptop.iss
+; the Visual C++ runtime DLLs and passes the versions in:
+;   ISCC /DAppVersion=1.2.0-dev.14 /DFileVersion=1.2.0.14 installer\ziptop.iss
 ;
 ; Installs per user (no administrator prompt), so the self-updater can run
 ; a new installer without elevation.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
+#endif
+; Four plain numbers, as Windows requires.
+#ifndef FileVersion
+  #define FileVersion "0.0.0.0"
 #endif
 #define AppName "ZipTop"
 #define AppExe "ziptop.exe"
@@ -21,7 +25,7 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher=ZipStreams
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#FileVersion}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
