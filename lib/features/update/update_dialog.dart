@@ -84,7 +84,8 @@ class _UpdateDialogState extends State<UpdateDialog> {
               _downloading
                   ? 'Downloading${percent == null ? '…' : ' $percent%'}'
                   : 'You have ${widget.service.currentVersion}. ZipTop will close while the '
-                      'update installs; anything being recorded will stop.',
+                      'update installs; anything being recorded will stop.\n\n'
+                      'Not now? The Update button stays in the sidebar.',
             ),
             if (_downloading) ...[
               const SizedBox(height: 16),

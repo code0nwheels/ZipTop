@@ -21,6 +21,8 @@ class SettingsStore extends ChangeNotifier {
   static const _multiviewLayoutKey = 'multiview_layout';
   static const _lastUpdateCheckKey = 'update_last_check_ms';
   static const _dismissedUpdateKey = 'update_dismissed_version';
+  static const _knownUpdateVersionKey = 'update_known_version';
+  static const _knownUpdateUrlKey = 'update_known_url';
 
   final SharedPreferences _prefs;
 
@@ -125,6 +127,25 @@ class SettingsStore extends ChangeNotifier {
       _prefs.remove(_dismissedUpdateKey);
     } else {
       _prefs.setString(_dismissedUpdateKey, value);
+    }
+  }
+
+  /// The newer release the last check found, so the update button survives
+  /// a restart between checks.
+  ({String version, String url})? get knownUpdate {
+    final version = _prefs.getString(_knownUpdateVersionKey);
+    final url = _prefs.getString(_knownUpdateUrlKey);
+    if (version == null || url == null || url.isEmpty) return null;
+    return (version: version, url: url);
+  }
+
+  set knownUpdate(({String version, String url})? value) {
+    if (value == null) {
+      _prefs.remove(_knownUpdateVersionKey);
+      _prefs.remove(_knownUpdateUrlKey);
+    } else {
+      _prefs.setString(_knownUpdateVersionKey, value.version);
+      _prefs.setString(_knownUpdateUrlKey, value.url);
     }
   }
 

@@ -195,19 +195,35 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 value: _startAtSignIn ?? false,
                 onChanged: _startAtSignIn == null ? null : _setStartAtSignIn,
               ),
-              ListTile(
-                leading: const Icon(Icons.system_update_alt),
-                title: const Text('Check for updates'),
-                subtitle: _updateStatus == null ? null : Text(_updateStatus!),
-                trailing: _checking
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : null,
-                onTap: _checking ? null : _checkForUpdates,
-              ),
+              if (widget.updates.available.value case final update?)
+                ListTile(
+                  leading: const Icon(Icons.download_rounded, color: ZipColors.success),
+                  title: Text('ZipTop ${update.version} is available'),
+                  subtitle: Text('You have ${widget.updates.currentVersion}'),
+                  trailing: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: ZipColors.success,
+                      foregroundColor: ZipColors.page,
+                    ),
+                    onPressed: () => widget.onUpdate(update),
+                    child: const Text('Update'),
+                  ),
+                  onTap: () => widget.onUpdate(update),
+                )
+              else
+                ListTile(
+                  leading: const Icon(Icons.system_update_alt),
+                  title: const Text('Check for updates'),
+                  subtitle: _updateStatus == null ? null : Text(_updateStatus!),
+                  trailing: _checking
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : null,
+                  onTap: _checking ? null : _checkForUpdates,
+                ),
               const Divider(height: 24),
               ListTile(
                 leading: const Icon(Icons.logout, color: ZipColors.danger),
