@@ -18,7 +18,7 @@ import 'theme.dart';
 Future<void> main(List<String> args) async {
   final startHidden = args.contains(StartupRegistration.minimizedFlag);
   WidgetsFlutterBinding.ensureInitialized();
-  MediaKit.ensureInitialized();
+  MediaKit.ensureInitialized(libmpv: bundledLibmpv());
   await windowManager.ensureInitialized();
   final settings = await SettingsStore.load();
   final support = await getApplicationSupportDirectory();
@@ -33,7 +33,7 @@ Future<void> main(List<String> args) async {
     backgroundColor: ZipColors.background,
   );
   await windowManager.waitUntilReadyToShow(options, () async {
-    // Started with Windows: stay hidden until opened from the tray.
+    // Started at sign-in: stay hidden until opened from the tray.
     if (startHidden) return;
     await windowManager.show();
     await windowManager.focus();
@@ -50,4 +50,14 @@ Future<void> main(List<String> args) async {
       child: const ZipTopApp(),
     ),
   );
+}
+
+/// On Linux, the libmpv 0.42 built by linux/third_party/build_libmpv.sh and
+/// installed next to the executable. Loading it by path keeps media_kit from
+/// picking up an older system libmpv.so. Null elsewhere, or when the build
+/// uses the system libmpv.
+String? bundledLibmpv() {
+  if (!Platform.isLinux) return null;
+  final path = p.join(p.dirname(Platform.resolvedExecutable), 'lib', 'libmpv.so.2');
+  return File(path).existsSync() ? path : null;
 }

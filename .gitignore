@@ -52,3 +52,6 @@ app.*.map.json
 
 # Installer output
 /installer/output/
+
+# Pinned libmpv build, made by linux/third_party/build_libmpv.sh
+/linux/third_party/libmpv/

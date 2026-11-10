@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=ZipTop
+GenericName=Live TV
+Comment=Live TV, TV guide, multiview and DVR for ZipStreams
+Exec=ziptop
+Icon=com.zipstreams.ziptop
+Terminal=false
+Categories=AudioVideo;Video;TV;Player;
+Keywords=TV;Live;Guide;DVR;Stream;
+StartupWMClass=com.zipstreams.ziptop

@@ -1,10 +1,11 @@
-name: Build Windows installer
+name: Build and release
 
-# - Every merge to main builds a test installer, versioned as the next
-#   patch with -dev.<run> (e.g. 1.2.4-dev.57), attached to the run.
+# - Every merge to main builds a test Windows installer and a test Linux
+#   AppImage, versioned as the next patch with -dev.<run> (e.g.
+#   1.2.4-dev.57), attached to the run.
 # - Pushing a tag v1.2.3, or running this by hand on main with a version
-#   typed in, builds 1.2.3 and publishes it as a GitHub Release with the
-#   installer attached. Installed copies of ZipTop offer it as an update.
+#   typed in, builds 1.2.3 and publishes it as a GitHub Release with both
+#   attached. Installed copies of ZipTop offer it as an update.
 on:
   push:
     branches:
@@ -27,11 +28,18 @@ concurrency:
   # A newer merge makes an older test build pointless; a release always finishes.
   cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'push' }}
 
+env:
+  # Keep in step with the version used for local builds.
+  FLUTTER_VERSION: '3.47.9'
+
 jobs:
-  installer:
-    name: Test and package
-    runs-on: windows-latest
-    timeout-minutes: 45
+  version:
+    name: Work out the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build_number: ${{ steps.version.outputs.build_number }}
+      release: ${{ steps.version.outputs.release }}
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -51,11 +59,19 @@ jobs:
           -InputVersion "$env:INPUT_VERSION"
           -RunNumber ${{ github.run_number }}
 
+  windows:
+    name: Windows installer
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          # Keep in step with the version used for local builds.
-          flutter-version: '3.47.9'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
 
@@ -90,30 +106,104 @@ jobs:
         shell: pwsh
         run: >
           ./tool/build_installer.ps1
-          -Version '${{ steps.version.outputs.version }}'
-          -BuildNumber ${{ steps.version.outputs.build_number }}
+          -Version '${{ needs.version.outputs.version }}'
+          -BuildNumber ${{ needs.version.outputs.build_number }}
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: ZipTop-Setup-${{ steps.version.outputs.version }}
+          name: ZipTop-Setup-${{ needs.version.outputs.version }}
           path: installer/output/ZipTop-Setup-*.exe
           if-no-files-found: error
           retention-days: 30
 
+  linux:
+    name: Linux AppImage
+    needs: version
+    # The oldest supported glibc (2.35): the AppImage runs on this and newer.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build pkg-config patchelf file \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev libepoxy-dev \
+            libsecret-1-dev libayatana-appindicator3-dev libjsoncpp-dev \
+            nasm python3-venv hwdata \
+            libfreetype-dev libfribidi-dev libharfbuzz-dev libfontconfig-dev \
+            libva-dev libdrm-dev libpulse-dev libasound2-dev \
+            libegl-dev libgl-dev libx11-dev libxext-dev libxpresent-dev \
+            libxrandr-dev libxss-dev libxkbcommon-dev libxv-dev \
+            zlib1g-dev libssl-dev
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # linux/third_party/build_libmpv.sh builds libmpv 0.42 and FFmpeg from
+      # pinned sources (several minutes); keep the result between runs.
+      - name: Cache libmpv
+        uses: actions/cache@v4
+        with:
+          path: |
+            linux/third_party/libmpv
+            !linux/third_party/libmpv/src
+          key: libmpv-linux-${{ hashFiles('linux/third_party/build_libmpv.sh') }}
+
+      - name: Get packages
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Build release and AppImage
+        run: >
+          ./tool/build_appimage.sh
+          --version '${{ needs.version.outputs.version }}'
+          --build-number ${{ needs.version.outputs.build_number }}
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZipTop-${{ needs.version.outputs.version }}-x86_64.AppImage
+          path: build/appimage/ZipTop-*-x86_64.AppImage
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish release
+    needs: [version, windows, linux]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download builds
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Publish release
-        if: steps.version.outputs.release == 'true'
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          $tag = "v$env:VERSION"
-          $setup = "installer/output/ZipTop-Setup-$env:VERSION.exe"
           # For a pushed tag the tag exists; for a manual run this creates it
           # at the commit that was built.
-          gh release create $tag $setup `
-            --title "ZipTop $env:VERSION" `
-            --target $env:GITHUB_SHA `
+          gh release create "v$VERSION" \
+            "dist/ZipTop-Setup-$VERSION.exe" \
+            "dist/ZipTop-$VERSION-x86_64.AppImage" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "ZipTop $VERSION" \
+            --target "$GITHUB_SHA" \
             --generate-notes
-          if ($LASTEXITCODE -ne 0) { throw 'Publishing the release failed.' }

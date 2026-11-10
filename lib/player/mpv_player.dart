@@ -27,7 +27,9 @@ class PlayerTuning {
 ///
 /// mpv 0.36, which media_kit bundles, crashes the whole process in FFmpeg's
 /// DASH demuxer on the backend's live `.mpd` manifests. 0.42 is the build
-/// ZipTop ships (see windows/CMakeLists.txt) and the oldest one verified.
+/// ZipTop ships (see windows/CMakeLists.txt and
+/// linux/third_party/build_libmpv.sh) and the oldest one verified. A Linux
+/// build made against the system libmpv usually has an older one.
 bool mpvPlaysDash(String? mpvVersion) {
   final match = RegExp(r'v?(\d+)\.(\d+)').firstMatch(mpvVersion ?? '');
   if (match == null) return false;
