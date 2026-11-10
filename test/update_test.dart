@@ -184,6 +184,20 @@ void main() {
       expect(settings.knownUpdate, isNull);
     });
 
+    test('install runs the installer silently, with no wizard', () async {
+      final started = <List<String>>[];
+      final original = UpdateService.detachedLauncher;
+      UpdateService.detachedLauncher = (exe, args) async => started.add([exe, ...args]);
+      addTearDown(() => UpdateService.detachedLauncher = original);
+
+      final installer = File('${Directory.systemTemp.path}${Platform.pathSeparator}ZipTop-Setup-1.3.0.exe');
+      await service.install(installer);
+
+      expect(started, [
+        [installer.path, '/VERYSILENT', '/NORESTART'],
+      ]);
+    });
+
     test('a check that finds nothing clears the update on offer', () async {
       await service.check();
       expect(service.available.value, isNotNull);

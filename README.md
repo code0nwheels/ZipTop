@@ -183,7 +183,8 @@ Installed copies ask GitHub for the latest release
 (`api.github.com/repos/<UPDATE_REPO>/releases/latest`) at start-up, at most
 every six hours, and from Settings. When its tag is newer than the running
 version and it has this platform's asset, ZipTop offers it. On Windows it
-downloads `ZipTop-Setup-*.exe` and runs it. On Linux it downloads
+downloads `ZipTop-Setup-*.exe` and runs it silently (`/VERYSILENT`, no
+wizard), which closes ZipTop, installs over it and starts it again. On Linux it downloads
 `ZipTop-*-x86_64.AppImage` next to the running AppImage, renames it over it
 and restarts; a Linux build not run as an AppImage, or one in a folder it
 can't write to, is not offered updates. On macOS it downloads

@@ -55,7 +55,8 @@ enum UpdatePlatform { windows, linux, macos }
 /// `ZipTop-<version>-macos-arm64.dmg` (holding `ZipTop.app`) for Apple
 /// Silicon Macs. Drafts and pre-releases are never offered.
 ///
-/// On Windows the installer is downloaded to the temp folder and started. On
+/// On Windows the installer is downloaded to the temp folder and run silently,
+/// with no wizard. On
 /// Linux only the AppImage build can update itself: the new AppImage is
 /// downloaded next to the running one (named by the `APPIMAGE` variable its
 /// runtime sets), renamed over it and started. On macOS the disk image is
@@ -316,8 +317,13 @@ class UpdateService {
     await Process.start(path, const [], mode: ProcessStartMode.detached);
   };
 
+  /// Runs the Inno Setup installer with no wizard and no window: it closes
+  /// this app, installs over it and starts the new version (the installer's
+  /// `[Run]` entry has no `skipifsilent`). Error messages still show.
+  static const windowsInstallerArguments = ['/VERYSILENT', '/NORESTART'];
+
   /// Starts a program with arguments on its own, so it outlives this app
-  /// (the macOS hand-over script).
+  /// (the Windows installer, the macOS hand-over script).
   @visibleForTesting
   static Future<void> Function(String executable, List<String> arguments) detachedLauncher =
       (executable, arguments) async {
@@ -325,15 +331,16 @@ class UpdateService {
   };
 
   /// Hands over to the [download]ed update; the caller quits afterwards. On
-  /// Windows this starts the installer. On Linux it makes the new AppImage
-  /// executable, renames it over the running one and starts it. On macOS it
+  /// Windows this starts the installer silently. On Linux it makes the new
+  /// AppImage executable, renames it over the running one and starts it. On
+  /// macOS it
   /// copies `ZipTop.app` out of the disk image beside the running bundle,
   /// swaps the two and starts a script that removes the old bundle and opens
   /// the new one once this process has quit.
   Future<void> install(File update) async {
     switch (platform) {
       case UpdatePlatform.windows:
-        await launcher(update.path);
+        await detachedLauncher(update.path, windowsInstallerArguments);
       case UpdatePlatform.linux:
         final appImage = _requireAppImage();
         // dart:io can't set permissions. A Windows host (only reached by

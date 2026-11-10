@@ -59,7 +59,9 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AppExe}"; Description: "Start {#AppName}"; Flags: nowait postinstall skipifsilent
+; The self-updater runs Setup with /VERYSILENT, so this must not be
+; skipifsilent: a silent install starts ZipTop again; a normal one offers it.
+Filename: "{app}\{#AppExe}"; Description: "Start {#AppName}"; Flags: nowait postinstall
 
 [Registry]
 ; "Start with Windows" is switched on inside the app. If it was on, point it
