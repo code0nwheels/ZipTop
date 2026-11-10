@@ -8,6 +8,7 @@ import 'core/api/streams_v2_api.dart';
 import 'core/auth/auth_events.dart';
 import 'core/auth/token_store.dart';
 import 'core/stores/catalog_store.dart';
+import 'core/stores/guide_repository.dart';
 import 'core/stores/settings_store.dart';
 
 final apiConfigProvider = Provider<ApiConfig>((ref) => ApiConfig());
@@ -40,6 +41,12 @@ final catalogStoreProvider = Provider<CatalogStore>((ref) {
   final store = CatalogStore(ref.watch(streamsV2ApiProvider));
   ref.onDispose(store.dispose);
   return store;
+});
+
+final guideRepositoryProvider = Provider<GuideRepository>((ref) {
+  final repository = GuideRepository(ref.watch(streamsV2ApiProvider));
+  ref.onDispose(repository.dispose);
+  return repository;
 });
 
 /// Loaded before the app starts and supplied through a ProviderScope override.

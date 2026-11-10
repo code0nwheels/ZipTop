@@ -19,6 +19,17 @@ void main() {
       expect(settings.recentIds, isEmpty);
       expect(settings.lastChannelId, isNull);
       expect(settings.volume, 100);
+      expect(settings.panelOpen, isTrue);
+      expect(settings.categoriesOpen, isTrue);
+    });
+
+    test('panel visibility is remembered', () async {
+      settings.panelOpen = false;
+      settings.categoriesOpen = false;
+
+      final reloaded = await SettingsStore.load();
+      expect(reloaded.panelOpen, isFalse);
+      expect(reloaded.categoriesOpen, isFalse);
     });
 
     test('recents are most-recent-first, de-duplicated and capped at 10', () {

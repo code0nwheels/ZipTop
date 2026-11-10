@@ -23,6 +23,10 @@ class ChannelPanel extends StatefulWidget {
     required this.searchController,
     required this.searchFocus,
     required this.onTune,
+    required this.showCategories,
+    required this.categoriesWidth,
+    required this.onToggleCategories,
+    required this.onHide,
   });
 
   final LiveController live;
@@ -31,6 +35,15 @@ class ChannelPanel extends StatefulWidget {
   final TextEditingController searchController;
   final FocusNode searchFocus;
   final TuneCallback onTune;
+
+  /// Whether the category column is shown. Without it, the row is picked
+  /// from a menu above the channel list.
+  final bool showCategories;
+  final double categoriesWidth;
+  final VoidCallback onToggleCategories;
+
+  /// Hide the whole panel.
+  final VoidCallback onHide;
 
   @override
   State<ChannelPanel> createState() => _ChannelPanelState();
@@ -121,7 +134,10 @@ class _ChannelPanelState extends State<ChannelPanel> {
         }
         if (feed != null) {
           final ids = feed.streamIds.toSet();
-          channels = [for (final c in channels) if (ids.contains(c.id)) c];
+          channels = [
+            for (final c in channels)
+              if (ids.contains(c.id)) c,
+          ];
         }
       }
     } else {
@@ -134,65 +150,94 @@ class _ChannelPanelState extends State<ChannelPanel> {
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-            child: TextField(
-              controller: widget.searchController,
-              focusNode: widget.searchFocus,
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: 'Search channels and shows',
-                prefixIcon: const Icon(Icons.search, size: 20),
-                suffixIcon: searching
-                    ? IconButton(
-                        tooltip: 'Clear',
-                        icon: const Icon(Icons.close, size: 18),
-                        onPressed: widget.searchController.clear,
-                      )
-                    : null,
-                filled: true,
-                fillColor: ZipColors.background,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none,
+            padding: const EdgeInsets.fromLTRB(12, 12, 4, 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: widget.searchController,
+                    focusNode: widget.searchFocus,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      hintText: 'Search channels and shows',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      suffixIcon: searching
+                          ? IconButton(
+                              tooltip: 'Clear',
+                              icon: const Icon(Icons.close, size: 18),
+                              onPressed: widget.searchController.clear,
+                            )
+                          : null,
+                      filled: true,
+                      fillColor: ZipColors.background,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+                IconButton(
+                  tooltip: widget.showCategories ? 'Hide categories' : 'Show categories',
+                  onPressed: widget.onToggleCategories,
+                  icon: Icon(
+                    widget.showCategories ? Icons.view_sidebar : Icons.view_sidebar_outlined,
+                    size: 20,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Hide channels (Ctrl+B)',
+                  onPressed: widget.onHide,
+                  icon: const Icon(Icons.keyboard_double_arrow_left, size: 20),
+                ),
+              ],
             ),
           ),
           const Divider(height: 1),
           Expanded(
             child: Row(
               children: [
-                SizedBox(
-                  width: 190,
-                  child: Opacity(
-                    opacity: searching ? 0.45 : 1,
-                    child: ListView(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      children: [
-                        if (showRecents)
-                          _CategoryTile(
-                            icon: '🕘',
-                            name: 'Recent',
-                            count: live.recents.length,
-                            selected: !searching && selectedId == recentCategoryId,
-                            onTap: () => _pick(recentCategoryId),
-                          ),
-                        for (final c in categories)
-                          _CategoryTile(
-                            icon: c.icon,
-                            name: c.name,
-                            count: _catalog.channelsIn(c).length,
-                            selected: !searching && selectedId == c.id,
-                            onTap: () => _pick(c.id),
-                          ),
-                      ],
+                if (widget.showCategories) ...[
+                  SizedBox(
+                    width: widget.categoriesWidth,
+                    child: Opacity(
+                      opacity: searching ? 0.45 : 1,
+                      child: ListView(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        children: [
+                          if (showRecents)
+                            _CategoryTile(
+                              icon: '🕘',
+                              name: 'Recent',
+                              count: live.recents.length,
+                              selected: !searching && selectedId == recentCategoryId,
+                              onTap: () => _pick(recentCategoryId),
+                            ),
+                          for (final c in categories)
+                            _CategoryTile(
+                              icon: c.icon,
+                              name: c.name,
+                              count: _catalog.channelsIn(c).length,
+                              selected: !searching && selectedId == c.id,
+                              onTap: () => _pick(c.id),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                const VerticalDivider(width: 1),
+                  const VerticalDivider(width: 1),
+                ],
                 Expanded(
                   child: Column(
                     children: [
+                      if (!widget.showCategories && !searching)
+                        _CategoryMenu(
+                          title: title,
+                          showRecents: showRecents,
+                          categories: categories,
+                          selectedId: selectedId,
+                          onPick: _pick,
+                        ),
                       if (feeds.isNotEmpty && !searching)
                         SizedBox(
                           height: 44,
@@ -220,8 +265,8 @@ class _ChannelPanelState extends State<ChannelPanel> {
                                 searching
                                     ? 'Nothing matches "$query".'
                                     : selectedId == CategoryIds.popular
-                                        ? "Nobody's watching anything right now."
-                                        : 'No channels here.',
+                                    ? "Nobody's watching anything right now."
+                                    : 'No channels here.',
                               )
                             : ListView.builder(
                                 itemCount: channels.length,
@@ -281,10 +326,7 @@ class _CategoryTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             border: Border(
-              left: BorderSide(
-                width: 3,
-                color: selected ? ZipColors.accent : Colors.transparent,
-              ),
+              left: BorderSide(width: 3, color: selected ? ZipColors.accent : Colors.transparent),
             ),
           ),
           child: Row(
@@ -304,12 +346,71 @@ class _CategoryTile extends StatelessWidget {
                   ),
                 ),
               ),
-              Text(
-                '$count',
-                style: text.bodySmall?.copyWith(color: ZipColors.textMuted),
-              ),
+              Text('$count', style: text.bodySmall?.copyWith(color: ZipColors.textMuted)),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Stands in for the category column when it is hidden.
+class _CategoryMenu extends StatelessWidget {
+  const _CategoryMenu({
+    required this.title,
+    required this.showRecents,
+    required this.categories,
+    required this.selectedId,
+    required this.onPick,
+  });
+
+  final String title;
+  final bool showRecents;
+  final List<Category> categories;
+  final String? selectedId;
+  final ValueChanged<String> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'Choose a category',
+      color: ZipColors.surface,
+      position: PopupMenuPosition.under,
+      constraints: const BoxConstraints(minWidth: 240, maxHeight: 520),
+      onSelected: onPick,
+      itemBuilder: (context) => [
+        if (showRecents)
+          CheckedPopupMenuItem(
+            value: recentCategoryId,
+            checked: selectedId == recentCategoryId,
+            child: const Text('Recent'),
+          ),
+        for (final c in categories)
+          CheckedPopupMenuItem(
+            value: c.id,
+            checked: selectedId == c.id,
+            child: Text(c.icon == null || c.icon!.isEmpty ? c.name : '${c.icon}  ${c.name}'),
+          ),
+      ],
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: ZipColors.surfaceHigh)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            const Icon(Icons.arrow_drop_down, color: ZipColors.textSecondary),
+          ],
         ),
       ),
     );
@@ -359,11 +460,11 @@ class _ChannelRowState extends State<_ChannelRow> {
   bool _hover = false;
 
   Color _stateColor(String state) => switch (state) {
-        'running' || 'paused' => ZipColors.live,
-        'retrying' => ZipColors.retrying,
-        'unavailable' => ZipColors.offline,
-        _ => ZipColors.textMuted,
-      };
+    'running' || 'paused' => ZipColors.live,
+    'retrying' => ZipColors.retrying,
+    'unavailable' => ZipColors.offline,
+    _ => ZipColors.textMuted,
+  };
 
   Future<void> _toggleFavorite() async {
     final catalog = widget.catalog;
@@ -453,10 +554,7 @@ class _ChannelRowState extends State<_ChannelRow> {
                   child: Container(
                     width: 8,
                     height: 8,
-                    decoration: BoxDecoration(
-                      color: _stateColor(state),
-                      shape: BoxShape.circle,
-                    ),
+                    decoration: BoxDecoration(color: _stateColor(state), shape: BoxShape.circle),
                   ),
                 ),
                 SizedBox(

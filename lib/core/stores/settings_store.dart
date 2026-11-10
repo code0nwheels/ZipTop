@@ -15,6 +15,8 @@ class SettingsStore extends ChangeNotifier {
   static const _recentsKey = 'recent_stream_ids';
   static const _lastChannelKey = 'last_stream_id';
   static const _volumeKey = 'volume';
+  static const _panelOpenKey = 'channel_panel_open';
+  static const _categoriesOpenKey = 'categories_open';
 
   final SharedPreferences _prefs;
 
@@ -62,6 +64,20 @@ class SettingsStore extends ChangeNotifier {
   double get volume => (_prefs.getDouble(_volumeKey) ?? 100).clamp(0, 100).toDouble();
   set volume(double value) {
     _prefs.setDouble(_volumeKey, value.clamp(0, 100).toDouble());
+    notifyListeners();
+  }
+
+  /// Whether the channel panel sits beside the video.
+  bool get panelOpen => _prefs.getBool(_panelOpenKey) ?? true;
+  set panelOpen(bool value) {
+    _prefs.setBool(_panelOpenKey, value);
+    notifyListeners();
+  }
+
+  /// Whether the channel panel shows its category column.
+  bool get categoriesOpen => _prefs.getBool(_categoriesOpenKey) ?? true;
+  set categoriesOpen(bool value) {
+    _prefs.setBool(_categoriesOpenKey, value);
     notifyListeners();
   }
 

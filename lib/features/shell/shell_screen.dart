@@ -8,10 +8,12 @@ import 'package:window_manager/window_manager.dart';
 import '../../core/models/catalog.dart';
 import '../../core/session/playback_session.dart';
 import '../../core/stores/catalog_store.dart';
+import '../../core/stores/guide_repository.dart';
 import '../../core/stores/settings_store.dart';
 import '../../player/mpv_player.dart';
 import '../../providers.dart';
 import '../../theme.dart';
+import '../guide/guide_view.dart';
 import '../live/channel_panel.dart';
 import '../live/live_controller.dart';
 import '../live/video_pane.dart';
@@ -30,12 +32,16 @@ class ShellScreen extends ConsumerStatefulWidget {
   ConsumerState<ShellScreen> createState() => _ShellScreenState();
 }
 
+enum _View { live, guide }
+
 class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
-  static const _panelWidth = 540.0;
+  static const _categoriesWidth = 190.0;
+  static const _channelsWidth = 350.0;
   static const _controlsLinger = Duration(seconds: 3);
 
   late final CatalogStore _catalog;
   late final SettingsStore _settings;
+  late final GuideRepository _guide;
   late final PlaybackSession _session;
   late final MpvPlayer _player;
   late final LiveController _live;
@@ -48,8 +54,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
   String? _bootError;
   bool _booting = true;
   bool _closing = false;
+  _View _view = _View.live;
   bool _fullscreen = false;
-  bool _panelOpen = true;
   bool _edgePanel = false;
   bool _controlsVisible = true;
   Timer? _controlsTimer;
@@ -59,6 +65,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     super.initState();
     _catalog = ref.read(catalogStoreProvider);
     _settings = ref.read(settingsStoreProvider);
+    _guide = ref.read(guideRepositoryProvider);
     _session = PlaybackSession(ref.read(streamsApiProvider));
     _player = MpvPlayer(config: ref.read(apiConfigProvider));
     _live = LiveController(
@@ -95,6 +102,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
   void onWindowClose() async {
     if (_closing) return;
     _closing = true;
+    // The window goes at once; telling the server we left happens behind it.
+    await windowManager.hide();
     try {
       await _live.shutdown().timeout(const Duration(seconds: 3));
     } catch (_) {
@@ -113,6 +122,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     if (!mounted || _fullscreen == value) return;
     setState(() {
       _fullscreen = value;
+      // Full screen is always the video.
+      if (value) _view = _View.live;
       _edgePanel = false;
     });
     _touchControls();
@@ -138,6 +149,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     await _live.shutdown();
     await ref.read(tokenStoreProvider).clear();
     _catalog.clear();
+    _guide.clear();
     _settings.clearHistory();
     widget.onSignedOut();
   }
@@ -148,11 +160,38 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     unawaited(_live.tune(channel, scope: scope, scopeName: scopeName));
   }
 
+  /// Shows or hides the channel panel. In full screen that is the slide-over.
+  void _togglePanel() {
+    if (_fullscreen) {
+      setState(() => _edgePanel = !_edgePanel);
+    } else if (_view != _View.live) {
+      _showView(_View.live);
+      _settings.panelOpen = true;
+    } else {
+      _settings.panelOpen = !_settings.panelOpen;
+    }
+    _focus.requestFocus();
+  }
+
+  void _showView(_View view) {
+    if (_view == view) return;
+    setState(() => _view = view);
+    _focus.requestFocus();
+    _touchControls();
+  }
+
+  /// From the guide: tune and go back to the video.
+  void _tuneFromGuide(Channel channel) {
+    _showView(_View.live);
+    unawaited(_live.tune(channel));
+  }
+
   void _focusSearch() {
+    if (_view != _View.live) setState(() => _view = _View.live);
     if (_fullscreen) {
       setState(() => _edgePanel = true);
-    } else if (!_panelOpen) {
-      setState(() => _panelOpen = true);
+    } else if (!_settings.panelOpen) {
+      _settings.panelOpen = true;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _searchFocus.requestFocus();
@@ -208,6 +247,10 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
       _focusSearch();
       return KeyEventResult.handled;
     }
+    if (keyboard.isControlPressed && key == LogicalKeyboardKey.keyB) {
+      _togglePanel();
+      return KeyEventResult.handled;
+    }
 
     // While typing in a text field only Escape is ours: it hands focus back.
     final typing = FocusManager.instance.primaryFocus?.context?.widget is EditableText;
@@ -257,9 +300,14 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
         setState(() => _edgePanel = false);
       } else if (_fullscreen) {
         unawaited(_setFullscreen(false));
+      } else if (_view == _View.guide) {
+        _showView(_View.live);
       } else {
         return KeyEventResult.ignored;
       }
+    } else if (key == LogicalKeyboardKey.keyG) {
+      if (_fullscreen) return KeyEventResult.ignored;
+      _showView(_view == _View.guide ? _View.live : _View.guide);
     } else if (key == LogicalKeyboardKey.keyI) {
       // Info: show the controls with what's on.
     } else {
@@ -323,7 +371,15 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
               searchController: _search,
               searchFocus: _searchFocus,
               onTune: _tune,
+              showCategories: _settings.categoriesOpen,
+              categoriesWidth: _categoriesWidth,
+              onToggleCategories: () =>
+                  _settings.categoriesOpen = !_settings.categoriesOpen,
+              onHide: _togglePanel,
             );
+            final panelWidth =
+                _channelsWidth + (_settings.categoriesOpen ? _categoriesWidth : 0);
+            final panelOpen = _settings.panelOpen;
 
             if (_fullscreen) {
               return Stack(
@@ -344,10 +400,10 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
                   AnimatedPositioned(
                     duration: const Duration(milliseconds: 160),
                     curve: Curves.easeOut,
-                    left: _edgePanel ? 0 : -_panelWidth,
+                    left: _edgePanel ? 0 : -panelWidth,
                     top: 0,
                     bottom: 0,
-                    width: _panelWidth,
+                    width: panelWidth,
                     child: MouseRegion(
                       onExit: (_) {
                         if (!_searchFocus.hasFocus) setState(() => _edgePanel = false);
@@ -362,13 +418,26 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
             return Row(
               children: [
                 _NavRail(
-                  panelOpen: _panelOpen,
-                  onTogglePanel: () => setState(() => _panelOpen = !_panelOpen),
+                  guideOpen: _view == _View.guide,
+                  panelOpen: _view == _View.live && panelOpen,
+                  onTogglePanel: _togglePanel,
+                  onGuide: () => _showView(_view == _View.guide ? _View.live : _View.guide),
                   onSearch: _focusSearch,
                   onSettings: _openSettings,
                 ),
-                if (_panelOpen) SizedBox(width: _panelWidth, child: panel),
-                Expanded(child: video),
+                if (_view == _View.guide)
+                  Expanded(
+                    child: GuideView(
+                      repository: _guide,
+                      live: _live,
+                      onTune: _tuneFromGuide,
+                      onBackToVideo: () => _showView(_View.live),
+                    ),
+                  )
+                else ...[
+                  if (panelOpen) SizedBox(width: panelWidth, child: panel),
+                  Expanded(child: video),
+                ],
               ],
             );
           },
@@ -380,14 +449,18 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
 
 class _NavRail extends StatelessWidget {
   const _NavRail({
+    required this.guideOpen,
     required this.panelOpen,
     required this.onTogglePanel,
+    required this.onGuide,
     required this.onSearch,
     required this.onSettings,
   });
 
+  final bool guideOpen;
   final bool panelOpen;
   final VoidCallback onTogglePanel;
+  final VoidCallback onGuide;
   final VoidCallback onSearch;
   final VoidCallback onSettings;
 
@@ -405,11 +478,18 @@ class _NavRail extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           IconButton(
-            tooltip: panelOpen ? 'Hide channels' : 'Show channels',
+            tooltip: panelOpen ? 'Hide channels (Ctrl+B)' : 'Show channels (Ctrl+B)',
             isSelected: panelOpen,
             onPressed: onTogglePanel,
             icon: const Icon(Icons.live_tv_outlined),
             selectedIcon: const Icon(Icons.live_tv, color: ZipColors.accent),
+          ),
+          IconButton(
+            tooltip: 'TV Guide (G)',
+            isSelected: guideOpen,
+            onPressed: onGuide,
+            icon: const Icon(Icons.calendar_view_week_outlined),
+            selectedIcon: const Icon(Icons.calendar_view_week, color: ZipColors.accent),
           ),
           IconButton(
             tooltip: 'Search (Ctrl+F)',
