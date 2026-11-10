@@ -119,6 +119,13 @@ class MpvPlayer {
     );
   }
 
+  /// Plays a local file, such as a recording, optionally from [start].
+  Future<void> playFile(String path, {Duration? start}) async {
+    await _ready;
+    final from = start != null && start > Duration.zero ? start : null;
+    await player.open(Media(path, start: from));
+  }
+
   /// Limits which HLS variant the next [play] picks: the best one at or
   /// under [bitsPerSecond], or the best there is when null. mpv reads this
   /// when a stream opens, so it does not disturb one that is playing. It has

@@ -7,9 +7,12 @@ import 'core/api/streams_api.dart';
 import 'core/api/streams_v2_api.dart';
 import 'core/auth/auth_events.dart';
 import 'core/auth/token_store.dart';
+import 'core/session/playback_session.dart';
 import 'core/stores/catalog_store.dart';
 import 'core/stores/guide_repository.dart';
 import 'core/stores/settings_store.dart';
+import 'dvr/dvr_service.dart';
+import 'dvr/dvr_store.dart';
 
 final apiConfigProvider = Provider<ApiConfig>((ref) => ApiConfig());
 
@@ -47,6 +50,27 @@ final guideRepositoryProvider = Provider<GuideRepository>((ref) {
   final repository = GuideRepository(ref.watch(streamsV2ApiProvider));
   ref.onDispose(repository.dispose);
   return repository;
+});
+
+/// One count of who is using each stream, shared by the player, multiview
+/// and recordings.
+final streamSlotsProvider = Provider<StreamSlots>((ref) => StreamSlots());
+
+/// Loaded before the app starts and supplied through a ProviderScope override.
+final dvrStoreProvider = Provider<DvrStore>(
+  (ref) => throw StateError('dvrStoreProvider must be overridden in main()'),
+);
+
+final dvrServiceProvider = Provider<DvrService>((ref) {
+  final service = DvrService(
+    store: ref.watch(dvrStoreProvider),
+    api: ref.watch(streamsApiProvider),
+    config: ref.watch(apiConfigProvider),
+    guide: ref.watch(guideRepositoryProvider),
+    slots: ref.watch(streamSlotsProvider),
+  );
+  ref.onDispose(service.dispose);
+  return service;
 });
 
 /// Loaded before the app starts and supplied through a ProviderScope override.

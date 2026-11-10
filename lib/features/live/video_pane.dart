@@ -6,8 +6,11 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../core/models/catalog.dart';
 import '../../core/session/playback_session.dart';
+import '../../core/stores/guide_repository.dart';
+import '../../dvr/dvr_service.dart';
 import '../../theme.dart';
 import 'channel_panel.dart' show nowPlayingProgress;
+import '../recordings/record_actions.dart';
 import 'live_controller.dart';
 
 /// The video with everything drawn over it: the control bar, the channel
@@ -16,6 +19,8 @@ class VideoPane extends StatefulWidget {
   const VideoPane({
     super.key,
     required this.live,
+    required this.dvr,
+    required this.guide,
     required this.fullscreen,
     required this.onToggleFullscreen,
     required this.onActivity,
@@ -23,6 +28,8 @@ class VideoPane extends StatefulWidget {
   });
 
   final LiveController live;
+  final DvrService dvr;
+  final GuideRepository guide;
   final bool fullscreen;
   final VoidCallback onToggleFullscreen;
 
@@ -123,6 +130,8 @@ class _VideoPaneState extends State<VideoPane> {
                     duration: const Duration(milliseconds: 150),
                     child: _ControlBar(
                       live: live,
+                      dvr: widget.dvr,
+                      guide: widget.guide,
                       fullscreen: widget.fullscreen,
                       onToggleFullscreen: widget.onToggleFullscreen,
                     ),
@@ -165,11 +174,15 @@ class _VideoPaneState extends State<VideoPane> {
 class _ControlBar extends StatelessWidget {
   const _ControlBar({
     required this.live,
+    required this.dvr,
+    required this.guide,
     required this.fullscreen,
     required this.onToggleFullscreen,
   });
 
   final LiveController live;
+  final DvrService dvr;
+  final GuideRepository guide;
   final bool fullscreen;
   final VoidCallback onToggleFullscreen;
 
@@ -261,6 +274,7 @@ class _ControlBar extends StatelessWidget {
                 color: favorite ? ZipColors.retrying : null,
               ),
             ),
+          if (channel != null) RecordButton(dvr: dvr, guide: guide, channel: channel),
           StreamBuilder<Tracks>(
             stream: player.stream.tracks,
             initialData: player.state.tracks,

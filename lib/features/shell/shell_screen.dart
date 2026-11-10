@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../core/models/catalog.dart';
@@ -12,6 +13,8 @@ import '../../core/session/playback_session.dart';
 import '../../core/stores/catalog_store.dart';
 import '../../core/stores/guide_repository.dart';
 import '../../core/stores/settings_store.dart';
+import '../../dvr/dvr_service.dart';
+import '../../dvr/models.dart';
 import '../../player/mpv_player.dart';
 import '../../providers.dart';
 import '../../theme.dart';
@@ -21,6 +24,9 @@ import '../live/live_controller.dart';
 import '../live/video_pane.dart';
 import '../multiview/multiview_controller.dart';
 import '../multiview/multiview_view.dart';
+import '../recordings/record_actions.dart';
+import '../recordings/recording_player.dart';
+import '../recordings/recordings_view.dart';
 import '../settings/settings_dialog.dart';
 
 /// The signed-in app: a slim navigation rail, the channel panel and the video.
@@ -36,9 +42,9 @@ class ShellScreen extends ConsumerStatefulWidget {
   ConsumerState<ShellScreen> createState() => _ShellScreenState();
 }
 
-enum _View { live, guide, multiview }
+enum _View { live, guide, multiview, recordings }
 
-class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
+class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, TrayListener {
   static const _categoriesWidth = 190.0;
   static const _channelsWidth = 350.0;
   static const _controlsLinger = Duration(seconds: 3);
@@ -50,6 +56,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
   late final MpvPlayer _player;
   late final LiveController _live;
   late final MultiviewController _multi;
+  late final DvrService _dvr;
 
   final _focus = FocusNode(debugLabel: 'shell');
   final _searchFocus = FocusNode(debugLabel: 'search');
@@ -59,6 +66,10 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
   String? _bootError;
   bool _booting = true;
   bool _closing = false;
+  bool _inTray = false;
+  bool _liveSuspended = false;
+  Recording? _playing;
+  bool _playingFromStart = false;
   _View _view = _View.live;
   bool _fullscreen = false;
   bool _edgePanel = false;
@@ -71,7 +82,9 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     _catalog = ref.read(catalogStoreProvider);
     _settings = ref.read(settingsStoreProvider);
     _guide = ref.read(guideRepositoryProvider);
-    _session = PlaybackSession(ref.read(streamsApiProvider));
+    final slots = ref.read(streamSlotsProvider);
+    _dvr = ref.read(dvrServiceProvider);
+    _session = PlaybackSession(ref.read(streamsApiProvider), slots: slots);
     _player = MpvPlayer(config: ref.read(apiConfigProvider));
     _live = LiveController(
       catalog: _catalog,
@@ -84,10 +97,12 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
       settings: _settings,
       api: ref.read(streamsApiProvider),
       config: ref.read(apiConfigProvider),
+      slots: slots,
     );
     // Volume changes reach whichever multiview tile has the audio.
     _settings.addListener(_multi.refreshAudio);
     windowManager.addListener(this);
+    trayManager.addListener(this);
     unawaited(windowManager.setPreventClose(true));
     unawaited(_boot());
   }
@@ -99,6 +114,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     });
     try {
       await _live.boot();
+      _dvr.start();
       // Open on Favorites when the viewer has some, like the Android guide.
       final favorites = _catalog.category(CategoryIds.favorites);
       if (_categoryId == null && favorites != null && !favorites.hidden) {
@@ -112,22 +128,147 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     if (kDebugMode && mounted && Platform.environment['ZIPTOP_START_VIEW'] == 'multiview') {
       _showView(_View.multiview);
     }
+    // Debug builds only: record the current channel for this many seconds.
+    final debugRecord = int.tryParse(Platform.environment['ZIPTOP_DEBUG_RECORD'] ?? '');
+    final current = _live.current;
+    if (kDebugMode && mounted && debugRecord != null && current != null) {
+      _dvr.scheduleFromNow(recordTargetOf(current), length: Duration(seconds: debugRecord));
+    }
   }
 
-  /// Releases the server slot before the window goes away.
+  /// With recordings scheduled or running, closing the window offers to keep
+  /// ZipTop in the notification area so they still happen.
   @override
   void onWindowClose() async {
     if (_closing) return;
+    if (_dvr.hasPendingWork) {
+      final keep = await _askKeepRunning();
+      if (keep == null) return;
+      if (keep) {
+        await _hideToTray();
+        return;
+      }
+    }
+    await _quit();
+  }
+
+  Future<bool?> _askKeepRunning() {
+    final recording = _dvr.store.active.length;
+    final scheduled = _dvr.store.scheduled.length;
+    final what = [
+      if (recording > 0) '$recording recording${recording == 1 ? '' : 's'} in progress',
+      if (scheduled > 0) '$scheduled scheduled',
+    ].join(' and ');
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Keep ZipTop running?'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 440),
+          child: Text(
+            'You have $what. Recordings only happen while ZipTop is running.\n\n'
+            'Keep it in the notification area, or quit and '
+            '${recording > 0 ? 'stop recording' : 'miss them'}?',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Quit'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Keep running'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Releases every server slot, closes any recording file, then exits. The
+  /// window goes at once; the rest happens behind it.
+  Future<void> _quit() async {
+    if (_closing) return;
     _closing = true;
-    // The window goes at once; telling the server we left happens behind it.
     await windowManager.hide();
     try {
-      await Future.wait([_live.shutdown(), _multi.closeAll()])
-          .timeout(const Duration(seconds: 3));
+      await Future.wait([_live.shutdown(), _multi.closeAll(), _dvr.stopAll()])
+          .timeout(const Duration(seconds: 10));
     } catch (_) {
       // Closing regardless.
     }
+    if (_inTray) {
+      try {
+        await trayManager.destroy();
+      } catch (_) {}
+    }
     await windowManager.destroy();
+  }
+
+  /// Hides the window and stops what was being watched; recordings carry on.
+  Future<void> _hideToTray() async {
+    if (_fullscreen) await _setFullscreen(false);
+    await windowManager.hide();
+    _inTray = true;
+    try {
+      await trayManager.setIcon('assets/app_icon.ico');
+      await trayManager.setToolTip('ZipTop: recordings scheduled');
+      await trayManager.setContextMenu(
+        Menu(
+          items: [
+            MenuItem(key: 'open', label: 'Open ZipTop'),
+            MenuItem.separator(),
+            MenuItem(key: 'quit', label: 'Quit ZipTop'),
+          ],
+        ),
+      );
+    } catch (_) {
+      // No tray icon: bring the window back rather than leave no way in.
+      _inTray = false;
+      await windowManager.show();
+      return;
+    }
+    if (!mounted) return;
+    final wasMultiview = _view == _View.multiview;
+    setState(() {
+      _view = _View.live;
+      _playing = null;
+    });
+    if (wasMultiview) await _multi.closeAll();
+    await _suspendLive();
+  }
+
+  Future<void> _restoreFromTray() async {
+    if (!_inTray) return;
+    _inTray = false;
+    try {
+      await trayManager.destroy();
+    } catch (_) {}
+    await windowManager.show();
+    await windowManager.focus();
+    if (mounted && _liveSuspended && _view == _View.live) {
+      _liveSuspended = false;
+      await _live.resume();
+    }
+  }
+
+  @override
+  void onTrayIconMouseDown() => unawaited(_restoreFromTray());
+
+  @override
+  void onTrayIconRightMouseDown() => unawaited(trayManager.popUpContextMenu());
+
+  @override
+  void onTrayMenuItemClick(MenuItem menuItem) {
+    if (menuItem.key == 'open') {
+      unawaited(_restoreFromTray());
+    } else if (menuItem.key == 'quit') {
+      unawaited(_quit());
+    }
   }
 
   @override
@@ -140,10 +281,13 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     if (!mounted || _fullscreen == value) return;
     setState(() {
       _fullscreen = value;
-      // The guide has no full-screen form; it gives way to the video.
-      if (value && _view == _View.guide) _view = _View.live;
       _edgePanel = false;
     });
+    // Only the video, multiview and a playing recording have a full-screen form.
+    if (value &&
+        (_view == _View.guide || (_view == _View.recordings && _playing == null))) {
+      _showView(_View.live);
+    }
     _touchControls();
   }
 
@@ -166,6 +310,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     if (_fullscreen) await _setFullscreen(false);
     await _live.shutdown();
     await _multi.closeAll();
+    await _dvr.stopAll();
     await ref.read(tokenStoreProvider).clear();
     _catalog.clear();
     _guide.clear();
@@ -194,28 +339,86 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
 
   void _showView(_View view) {
     if (_view == view) return;
-    final leavingMultiview = _view == _View.multiview;
-    setState(() => _view = view);
-    if (view == _View.multiview) {
-      unawaited(_enterMultiview());
-    } else if (leavingMultiview) {
-      unawaited(_leaveMultiview());
-    }
+    final from = _view;
+    setState(() {
+      _view = view;
+      _playing = null;
+    });
+    unawaited(_transition(from, view));
     _focus.requestFocus();
     _touchControls();
   }
 
-  /// The single player hands its stream slot over before the tiles start.
-  Future<void> _enterMultiview() async {
-    final seed = _live.current;
-    await _live.suspend();
-    if (!mounted || _view != _View.multiview) return;
-    _multi.enter(seed: seed);
+  /// Hands the stream slot between the single player and whatever replaces
+  /// it. The single player stops for multiview and for recording playback,
+  /// and comes back with the video or the guide (which previews it).
+  Future<void> _transition(_View from, _View to) async {
+    if (from == _View.multiview) await _multi.closeAll();
+    if (to == _View.multiview) {
+      final seed = _live.current;
+      await _suspendLive();
+      if (!mounted || _view != _View.multiview) return;
+      _multi.enter(seed: seed);
+      return;
+    }
+    if ((to == _View.live || to == _View.guide) && _liveSuspended && mounted && _view == to) {
+      _liveSuspended = false;
+      await _live.resume();
+    }
   }
 
-  Future<void> _leaveMultiview() async {
-    await _multi.closeAll();
-    if (mounted && _view != _View.multiview) await _live.resume();
+  Future<void> _suspendLive() async {
+    _liveSuspended = true;
+    await _live.suspend();
+  }
+
+  void _playRecording(Recording recording, {bool fromStart = false}) {
+    setState(() {
+      _playing = recording;
+      _playingFromStart = fromStart;
+    });
+    unawaited(_suspendLive());
+  }
+
+  void _closeRecording() {
+    if (_fullscreen) unawaited(_setFullscreen(false));
+    setState(() => _playing = null);
+    _focus.requestFocus();
+  }
+
+  /// R: stop a recording of this channel, or record what is on.
+  void _quickRecord() {
+    final channel = _live.current;
+    if (channel == null) return;
+    final active = _dvr.activeOn(channel.id);
+    if (active != null) {
+      _dvr.cancel(active.id);
+      return;
+    }
+    final target = recordTargetOf(channel);
+    final programme = currentProgrammeOf(channel);
+    if (programme != null) {
+      unawaited(recordProgramme(context, _dvr, target, programme));
+    } else {
+      unawaited(recordNextHour(context, _dvr, target));
+    }
+  }
+
+  KeyEventResult _onRecordingsKey(LogicalKeyboardKey key) {
+    if (key == LogicalKeyboardKey.escape) {
+      if (_playing != null) {
+        _closeRecording();
+      } else {
+        _showView(_View.live);
+      }
+    } else if (key == LogicalKeyboardKey.keyG && !_fullscreen) {
+      _showView(_View.guide);
+    } else if (key == LogicalKeyboardKey.keyV && !_fullscreen) {
+      _showView(_View.multiview);
+    } else {
+      return KeyEventResult.ignored;
+    }
+    return KeyEventResult.handled;
   }
 
   KeyEventResult _onMultiviewKey(LogicalKeyboardKey key) {
@@ -345,6 +548,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     }
 
     if (_view == _View.multiview) return _onMultiviewKey(key);
+    if (_view == _View.recordings) return _onRecordingsKey(key);
 
     final digit = _digitKeys[key];
     if (digit != null) {
@@ -391,6 +595,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
     } else if (key == LogicalKeyboardKey.keyV) {
       if (_fullscreen) return KeyEventResult.ignored;
       _showView(_View.multiview);
+    } else if (key == LogicalKeyboardKey.keyR) {
+      _quickRecord();
     } else if (key == LogicalKeyboardKey.keyI) {
       // Info: show the controls with what's on.
     } else {
@@ -403,6 +609,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
   @override
   void dispose() {
     windowManager.removeListener(this);
+    trayManager.removeListener(this);
     unawaited(windowManager.setPreventClose(false));
     _controlsTimer?.cancel();
     _settings.removeListener(_multi.refreshAudio);
@@ -424,7 +631,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
         autofocus: true,
         onKeyEvent: _onKey,
         child: ListenableBuilder(
-          listenable: Listenable.merge([_live, _catalog, _settings]),
+          listenable: Listenable.merge([_live, _catalog, _settings, _dvr]),
           builder: (context, _) {
             if (_booting && !_catalog.isLoaded) {
               return const Center(child: CircularProgressIndicator());
@@ -444,6 +651,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
 
             final video = VideoPane(
               live: _live,
+              dvr: _dvr,
+              guide: _guide,
               fullscreen: _fullscreen,
               controlsVisible: _controlsVisible,
               onActivity: _touchControls,
@@ -473,7 +682,23 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
               onInteraction: _focus.requestFocus,
             );
 
+            final playing = _playing;
+            final recordings = playing != null
+                ? RecordingPlayerView(
+                    key: ValueKey('${playing.id}:$_playingFromStart'),
+                    recording: playing,
+                    fromStart: _playingFromStart,
+                    dvr: _dvr,
+                    settings: _settings,
+                    config: ref.read(apiConfigProvider),
+                    fullscreen: _fullscreen,
+                    onToggleFullscreen: () => _setFullscreen(!_fullscreen),
+                    onClose: _closeRecording,
+                  )
+                : RecordingsView(dvr: _dvr, onPlay: _playRecording);
+
             if (_fullscreen && _view == _View.multiview) return multiview;
+            if (_fullscreen && _view == _View.recordings) return recordings;
 
             if (_fullscreen) {
               return Stack(
@@ -519,15 +744,22 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener {
                   panelOpen: _view == _View.live && panelOpen,
                   onTogglePanel: _togglePanel,
                   onGuide: () => _showView(_view == _View.guide ? _View.live : _View.guide),
+                  recordingsOpen: _view == _View.recordings,
+                  recordingNow: _dvr.store.active.isNotEmpty,
+                  onRecordings: () =>
+                      _showView(_view == _View.recordings ? _View.live : _View.recordings),
                   onSearch: _focusSearch,
                   onSettings: _openSettings,
                 ),
                 if (_view == _View.multiview)
                   Expanded(child: multiview)
+                else if (_view == _View.recordings)
+                  Expanded(child: recordings)
                 else if (_view == _View.guide)
                   Expanded(
                     child: GuideView(
                       repository: _guide,
+                      dvr: _dvr,
                       live: _live,
                       onTune: _tuneFromGuide,
                       onBackToVideo: () => _showView(_View.live),
@@ -554,6 +786,9 @@ class _NavRail extends StatelessWidget {
     required this.panelOpen,
     required this.onTogglePanel,
     required this.onGuide,
+    required this.recordingsOpen,
+    required this.recordingNow,
+    required this.onRecordings,
     required this.onSearch,
     required this.onSettings,
   });
@@ -564,6 +799,11 @@ class _NavRail extends StatelessWidget {
   final bool panelOpen;
   final VoidCallback onTogglePanel;
   final VoidCallback onGuide;
+  final bool recordingsOpen;
+
+  /// Something is being recorded right now.
+  final bool recordingNow;
+  final VoidCallback onRecordings;
   final VoidCallback onSearch;
   final VoidCallback onSettings;
 
@@ -600,6 +840,23 @@ class _NavRail extends StatelessWidget {
             onPressed: onMultiview,
             icon: const Icon(Icons.grid_view_outlined),
             selectedIcon: const Icon(Icons.grid_view, color: ZipColors.accent),
+          ),
+          IconButton(
+            tooltip: recordingNow ? 'Recordings (recording now)' : 'Recordings',
+            isSelected: recordingsOpen,
+            onPressed: onRecordings,
+            icon: Badge(
+              isLabelVisible: recordingNow,
+              backgroundColor: ZipColors.offline,
+              smallSize: 9,
+              child: const Icon(Icons.video_library_outlined),
+            ),
+            selectedIcon: Badge(
+              isLabelVisible: recordingNow,
+              backgroundColor: ZipColors.offline,
+              smallSize: 9,
+              child: const Icon(Icons.video_library, color: ZipColors.accent),
+            ),
           ),
           IconButton(
             tooltip: 'Search (Ctrl+F)',

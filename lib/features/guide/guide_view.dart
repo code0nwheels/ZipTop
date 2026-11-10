@@ -7,8 +7,11 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../../core/models/catalog.dart';
 import '../../core/models/guide.dart';
 import '../../core/stores/guide_repository.dart';
+import '../../dvr/dvr_service.dart';
+import '../../dvr/models.dart';
 import '../../theme.dart';
 import '../live/live_controller.dart';
+import '../recordings/record_actions.dart';
 
 /// Where programmes sit on the grid's time axis.
 class GuideLayout {
@@ -56,12 +59,14 @@ class GuideView extends StatefulWidget {
   const GuideView({
     super.key,
     required this.repository,
+    required this.dvr,
     required this.live,
     required this.onTune,
     required this.onBackToVideo,
   });
 
   final GuideRepository repository;
+  final DvrService dvr;
   final LiveController live;
 
   /// Tune a channel and go back to the video.
@@ -96,6 +101,7 @@ class _GuideViewState extends State<GuideView> {
     super.initState();
     _guide = widget.repository.guide;
     _vertical.addListener(_syncLabels);
+    widget.dvr.addListener(_onDvr);
     // Keeps the "now" line and on-now highlights current.
     _clock = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
@@ -107,11 +113,17 @@ class _GuideViewState extends State<GuideView> {
   void dispose() {
     _debounce?.cancel();
     _clock?.cancel();
+    widget.dvr.removeListener(_onDvr);
     _vertical.dispose();
     _labels.dispose();
     _horizontal.dispose();
     _search.dispose();
     super.dispose();
+  }
+
+  /// Recording dots follow the schedule.
+  void _onDvr() {
+    if (mounted) setState(() {});
   }
 
   void _syncLabels() {
@@ -187,6 +199,9 @@ class _GuideViewState extends State<GuideView> {
       widget.onTune(_toChannel(channel));
       return;
     }
+    final dvr = widget.dvr;
+    final target = (id: channel.id, name: channel.name, type: channel.type ?? '');
+    final pending = dvr.pendingFor(channel.id, programme);
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -214,13 +229,37 @@ class _GuideViewState extends State<GuideView> {
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Close'),
           ),
-          FilledButton(
+          TextButton(
             onPressed: () {
               Navigator.of(context).pop();
               widget.onTune(_toChannel(channel));
             },
             child: const Text('Watch channel now'),
           ),
+          if (programme.title.isNotEmpty)
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                recordSeries(this.context, dvr, widget.repository, target, programme.title);
+              },
+              child: const Text('Record all episodes'),
+            ),
+          if (pending != null)
+            FilledButton.tonal(
+              onPressed: () {
+                Navigator.of(context).pop();
+                dvr.cancel(pending.id);
+              },
+              child: const Text('Cancel recording'),
+            )
+          else
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                recordProgramme(this.context, dvr, target, programme);
+              },
+              child: const Text('Record'),
+            ),
         ],
       ),
     );
@@ -481,6 +520,8 @@ class _GuideViewState extends State<GuideView> {
                                   channel: channels[index],
                                   layout: layout,
                                   now: now,
+                                  stateOf: (channel, programme) =>
+                                      widget.dvr.pendingFor(channel.id, programme)?.state,
                                   onProgramme: _onProgramme,
                                   onEmpty: (c) => widget.onTune(_toChannel(c)),
                                 ),
@@ -599,6 +640,7 @@ class _ProgrammeRow extends StatelessWidget {
     required this.channel,
     required this.layout,
     required this.now,
+    required this.stateOf,
     required this.onProgramme,
     required this.onEmpty,
   });
@@ -606,6 +648,9 @@ class _ProgrammeRow extends StatelessWidget {
   final GuideChannel channel;
   final GuideLayout layout;
   final DateTime now;
+
+  /// Whether a programme is scheduled or being recorded.
+  final RecordingState? Function(GuideChannel channel, Programme programme) stateOf;
   final void Function(GuideChannel channel, Programme programme, bool onNow) onProgramme;
   final ValueChanged<GuideChannel> onEmpty;
 
@@ -626,6 +671,7 @@ class _ProgrammeRow extends StatelessWidget {
           child: _ProgrammeBlock(
             programme: programme,
             onNow: isNow,
+            recording: stateOf(channel, programme),
             onTap: () => onProgramme(channel, programme, isNow),
           ),
         ),
@@ -659,10 +705,18 @@ class _ProgrammeRow extends StatelessWidget {
 }
 
 class _ProgrammeBlock extends StatelessWidget {
-  const _ProgrammeBlock({required this.programme, required this.onNow, required this.onTap});
+  const _ProgrammeBlock({
+    required this.programme,
+    required this.onNow,
+    required this.recording,
+    required this.onTap,
+  });
 
   final Programme programme;
   final bool onNow;
+
+  /// Scheduled (blue dot) or recording (red dot), or null.
+  final RecordingState? recording;
   final VoidCallback onTap;
 
   @override
@@ -685,16 +739,33 @@ class _ProgrammeBlock extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    programme.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    softWrap: false,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: onNow ? ZipColors.accent : ZipColors.text,
-                    ),
+                  Row(
+                    children: [
+                      if (recording != null)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 5),
+                          child: Icon(
+                            Icons.circle,
+                            size: 9,
+                            color: recording == RecordingState.recording
+                                ? ZipColors.offline
+                                : ZipColors.accent,
+                          ),
+                        ),
+                      Expanded(
+                        child: Text(
+                          programme.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          softWrap: false,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: onNow ? ZipColors.accent : ZipColors.text,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   Text(
                     '${formatClock(programme.start)} – ${formatClock(programme.stop)}',

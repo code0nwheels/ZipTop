@@ -46,6 +46,7 @@ class MultiviewController extends ChangeNotifier {
     required this.settings,
     required this._api,
     required this._config,
+    this.slots,
   }) : _layout = MultiLayout.byName(settings.multiviewLayout);
 
   static const unsupportedMessage = "This channel's stream format can't be played.";
@@ -60,6 +61,10 @@ class MultiviewController extends ChangeNotifier {
   final SettingsStore settings;
   final StreamsApi _api;
   final ApiConfig _config;
+
+  /// Shared stream bookkeeping, so a tile never ends a stream that a
+  /// recording is still using.
+  final StreamSlots? slots;
 
   final _tiles = <MultiTile>[];
   MultiLayout _layout;
@@ -221,7 +226,7 @@ class MultiviewController extends ChangeNotifier {
     final tile = MultiTile._(
       _nextId++,
       channel,
-      PlaybackSession(_api),
+      PlaybackSession(_api, slots: slots),
       MpvPlayer(config: _config, tuning: PlayerTuning.tile),
     );
     tile._sessionListener = () => _onSession(tile);

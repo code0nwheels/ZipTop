@@ -11,6 +11,10 @@ class StreamsApi {
 
   final ApiClient _client;
 
+  /// The account's concurrent-stream allowance, as last reported by
+  /// [checkLimit]. Null until the server has said.
+  int? lastStreamLimit;
+
   String _id(String streamId) => Uri.encodeComponent(streamId);
 
   /// Passes the stream about to be opened so the server can exclude this
@@ -21,6 +25,8 @@ class StreamsApi {
       query: {'stream_id': streamId},
     );
     final json = res.json;
+    final reported = asInt(json?['stream_limit']);
+    if (reported != null && reported > 0) lastStreamLimit = reported;
     if (res.ok) {
       if (json != null && asBool(json['allowed']) == true) return;
       final limit = asInt(json?['stream_limit']);
