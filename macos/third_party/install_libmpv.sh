@@ -187,8 +187,11 @@ if [[ -n "$present" ]]; then
   # another.
   refs="$(mktemp)"
   trap 'rm -f "$refs"' EXIT
+  # Owner "-" is a Mach-O outside any framework (the app's executable). It
+  # can't be an empty field: tab is whitespace to read, so an empty first
+  # field would vanish and shift the framework name into it.
   while IFS= read -r f; do
-    owner=""
+    owner="-"
     case "$f" in
       "$fw"/*.framework/*) owner="${f#"$fw"/}"; owner="${owner%%/*}" ;;
     esac
@@ -203,8 +206,8 @@ if [[ -n "$present" ]]; then
   while ((changed)); do
     changed=0
     while IFS=$'\t' read -r owner name; do
-      if has "$removable" "$name" && ! { [[ -n "$owner" ]] && has "$removable" "$owner"; }; then
-        echo "Keeping $name: ${owner:-the app} links it"
+      if has "$removable" "$name" && ! { [[ "$owner" != - ]] && has "$removable" "$owner"; }; then
+        echo "Keeping $name: $( [[ "$owner" == - ]] && echo the app || echo "$owner" ) links it"
         removable="$(printf '%s\n' "$removable" | grep -vxF "$name" || true)"
         changed=1
       fi
