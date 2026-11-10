@@ -1,0 +1,531 @@
+{
+  "api_version": 2,
+  "categories": [
+    {
+      "hidden": false,
+      "icon": null,
+      "id": "system:popular",
+      "is_priority": false,
+      "kind": "system",
+      "name": "Popular now",
+      "raw_name": "Popular now",
+      "section": "top",
+      "stream_ids": [
+        "r-1",
+        "s-247-1",
+        "s-nhl-1",
+        "r-2",
+        "s-uk-1"
+      ]
+    },
+    {
+      "hidden": false,
+      "icon": "🕒",
+      "id": "system:continue_watching",
+      "is_priority": false,
+      "kind": "system",
+      "name": "Continue Watching",
+      "raw_name": "Continue Watching",
+      "section": "yours",
+      "stream_ids": [
+        "s-uk-1",
+        "s-nhl-2",
+        "r-2"
+      ]
+    },
+    {
+      "hidden": false,
+      "icon": "⭐",
+      "id": "system:favorites",
+      "is_priority": false,
+      "kind": "system",
+      "name": "Favorites",
+      "raw_name": "Favorites",
+      "section": "yours",
+      "stream_ids": [
+        "s-nhlp-2",
+        "r-1",
+        "s-uk-2",
+        "s-247-1"
+      ]
+    },
+    {
+      "hidden": false,
+      "icon": null,
+      "id": "system:all",
+      "is_priority": false,
+      "kind": "system",
+      "name": "All channels",
+      "raw_name": "All channels",
+      "section": "channels",
+      "stream_ids": [
+        "s-nhlp-2",
+        "r-1",
+        "s-uk-2",
+        "s-247-1",
+        "s-flo-1",
+        "s-nhlx-1",
+        "s-spec-1",
+        "s-nhl-1",
+        "s-nhl-3",
+        "s-ent-1",
+        "s-247-2",
+        "s-gen-1",
+        "s-nhlp-1",
+        "s-nhl-2",
+        "r-2",
+        "s-uk-1",
+        "s-rtmp-1"
+      ]
+    },
+    {
+      "feeds": [
+        {
+          "id": "group:AM | SPECIALS",
+          "is_priority": false,
+          "label": "AM",
+          "name": "AM | SPECIALS",
+          "stream_ids": [
+            "s-spec-1"
+          ]
+        }
+      ],
+      "hidden": false,
+      "icon": null,
+      "id": "canonical:Zip | Specials",
+      "is_priority": true,
+      "kind": "canonical",
+      "name": "Specials",
+      "raw_name": "Zip | Specials",
+      "section": "channels",
+      "stream_ids": [
+        "s-spec-1"
+      ]
+    },
+    {
+      "hidden": false,
+      "icon": null,
+      "id": "group:Zip | Flosports",
+      "is_priority": true,
+      "kind": "group",
+      "name": "Flosports",
+      "raw_name": "Zip | Flosports",
+      "section": "channels",
+      "stream_ids": [
+        "s-flo-1"
+      ]
+    },
+    {
+      "feeds": [
+        {
+          "id": "group:Zip | NHL EXTRA",
+          "is_priority": true,
+          "label": "Zip",
+          "name": "Zip | NHL EXTRA",
+          "stream_ids": [
+            "s-nhlx-1"
+          ]
+        },
+        {
+          "id": "group:AM | USA NHL",
+          "is_priority": false,
+          "label": "AM",
+          "name": "AM | USA NHL",
+          "stream_ids": [
+            "s-nhl-1",
+            "s-nhl-3",
+            "s-nhl-2"
+          ]
+        },
+        {
+          "id": "group:US| NHL PACKAGE",
+          "is_priority": false,
+          "label": "US",
+          "name": "US| NHL PACKAGE",
+          "stream_ids": [
+            "s-nhlp-2",
+            "s-nhlp-1"
+          ]
+        }
+      ],
+      "hidden": false,
+      "icon": "🏒",
+      "id": "canonical:NHL",
+      "is_priority": false,
+      "kind": "canonical",
+      "name": "NHL",
+      "raw_name": "NHL",
+      "section": "channels",
+      "stream_ids": [
+        "s-nhlp-2",
+        "s-nhlx-1",
+        "s-nhl-1",
+        "s-nhl-3",
+        "s-nhlp-1",
+        "s-nhl-2"
+      ]
+    },
+    {
+      "feeds": [
+        {
+          "id": "group:US| ENTERTAINMENT",
+          "is_priority": false,
+          "label": "US",
+          "name": "US| ENTERTAINMENT",
+          "stream_ids": [
+            "s-ent-1"
+          ]
+        }
+      ],
+      "hidden": false,
+      "icon": "🎬",
+      "id": "canonical:Entertainment",
+      "is_priority": false,
+      "kind": "canonical",
+      "name": "Entertainment",
+      "raw_name": "Entertainment",
+      "section": "channels",
+      "stream_ids": [
+        "s-ent-1"
+      ]
+    },
+    {
+      "hidden": false,
+      "icon": null,
+      "id": "group:UK| SPORTS",
+      "is_priority": false,
+      "kind": "group",
+      "name": "UK| SPORTS",
+      "raw_name": "UK| SPORTS",
+      "section": "channels",
+      "stream_ids": [
+        "s-ent-1",
+        "s-uk-1",
+        "s-uk-2"
+      ],
+      "subgroups": [
+        {
+          "name": null,
+          "stream_ids": [
+            "s-ent-1"
+          ]
+        },
+        {
+          "name": "Football",
+          "stream_ids": [
+            "s-uk-1"
+          ]
+        },
+        {
+          "name": "Racing",
+          "stream_ids": [
+            "s-uk-2"
+          ]
+        }
+      ]
+    },
+    {
+      "hidden": false,
+      "icon": null,
+      "id": "group:24/7 Classics",
+      "is_priority": false,
+      "kind": "group",
+      "name": "24/7 Classics",
+      "raw_name": "24/7 Classics",
+      "section": "channels",
+      "stream_ids": [
+        "s-247-1",
+        "s-247-2"
+      ],
+      "subgroups": [
+        {
+          "name": "Cartoons",
+          "stream_ids": [
+            "s-247-1"
+          ]
+        },
+        {
+          "name": "Movies",
+          "stream_ids": [
+            "s-247-2"
+          ]
+        }
+      ]
+    },
+    {
+      "hidden": false,
+      "icon": "⚽",
+      "id": "custom:cc-wc",
+      "is_priority": false,
+      "kind": "custom",
+      "name": "World Cup",
+      "raw_name": "World Cup",
+      "section": "channels",
+      "stream_ids": [
+        "s-nhl-2",
+        "s-uk-1"
+      ]
+    },
+    {
+      "hidden": false,
+      "icon": null,
+      "id": "group:General",
+      "is_priority": false,
+      "kind": "group",
+      "name": "General",
+      "raw_name": "General",
+      "section": "channels",
+      "stream_ids": [
+        "s-gen-1"
+      ]
+    },
+    {
+      "hidden": false,
+      "icon": null,
+      "id": "group:Studio",
+      "is_priority": false,
+      "kind": "group",
+      "name": "Studio",
+      "raw_name": "Studio",
+      "section": "channels",
+      "stream_ids": [
+        "s-rtmp-1"
+      ]
+    },
+    {
+      "hidden": false,
+      "icon": null,
+      "id": "group:Gaming",
+      "is_priority": false,
+      "kind": "group",
+      "name": "Gaming",
+      "raw_name": "Gaming",
+      "section": "channels",
+      "stream_ids": [
+        "r-1"
+      ]
+    },
+    {
+      "hidden": false,
+      "icon": null,
+      "id": "group:User Streams",
+      "is_priority": false,
+      "kind": "group",
+      "name": "User Streams",
+      "raw_name": "User Streams",
+      "section": "channels",
+      "stream_ids": [
+        "r-2"
+      ]
+    },
+    {
+      "hidden": false,
+      "icon": null,
+      "id": "group:Empty Group",
+      "is_priority": false,
+      "kind": "group",
+      "name": "Empty Group",
+      "raw_name": "Empty Group",
+      "section": "channels",
+      "stream_ids": []
+    }
+  ],
+  "favorite_ids": [
+    "s-nhlp-2",
+    "r-1",
+    "s-uk-2",
+    "s-247-1"
+  ],
+  "streams": [
+    {
+      "category_id": "group:Zip | Flosports",
+      "group": "Zip | Flosports",
+      "id": "s-flo-1",
+      "name": "Flo Hockey",
+      "now_playing": null,
+      "number": 1,
+      "subgroup": null,
+      "type": "iptv"
+    },
+    {
+      "category_id": "canonical:NHL",
+      "group": "Zip | NHL EXTRA",
+      "id": "s-nhlx-1",
+      "name": "NHL Extra 1",
+      "now_playing": null,
+      "number": 2,
+      "subgroup": null,
+      "type": "iptv"
+    },
+    {
+      "category_id": "canonical:Zip | Specials",
+      "group": "AM | SPECIALS",
+      "id": "s-spec-1",
+      "name": "Special Event",
+      "now_playing": null,
+      "number": 3,
+      "subgroup": null,
+      "type": "iptv"
+    },
+    {
+      "category_id": "canonical:NHL",
+      "group": "AM | USA NHL",
+      "id": "s-nhl-1",
+      "name": "11:10 AM ET - Bruins @ Rangers",
+      "now_playing": {
+        "description": "Bruins at Rangers",
+        "start": "2026-09-14T15:00:00+00:00",
+        "stop": "2026-09-14T18:00:00+00:00",
+        "title": "NHL Hockey"
+      },
+      "number": 4,
+      "subgroup": null,
+      "type": "iptv"
+    },
+    {
+      "category_id": "canonical:NHL",
+      "group": "AM | USA NHL",
+      "id": "s-nhl-3",
+      "name": "7:00 PM ET - Leafs vs Habs",
+      "now_playing": null,
+      "number": 5,
+      "subgroup": null,
+      "type": "iptv"
+    },
+    {
+      "category_id": "canonical:NHL",
+      "group": "US| NHL PACKAGE",
+      "id": "s-nhlp-2",
+      "name": "Bruins @ Rangers",
+      "now_playing": null,
+      "number": 6,
+      "subgroup": null,
+      "type": "iptv"
+    },
+    {
+      "category_id": "canonical:Entertainment",
+      "group": "US| ENTERTAINMENT",
+      "id": "s-ent-1",
+      "name": "AMC & Friends <HD>",
+      "now_playing": null,
+      "number": 7,
+      "subgroup": null,
+      "type": "iptv"
+    },
+    {
+      "category_id": "group:Gaming",
+      "group": "Gaming",
+      "id": "r-1",
+      "name": "Gaming <Live>",
+      "now_playing": null,
+      "number": 8,
+      "subgroup": null,
+      "type": "user_rtmp"
+    },
+    {
+      "category_id": "group:24/7 Classics",
+      "group": "24/7 Classics",
+      "id": "s-247-2",
+      "name": "Movie Marathon",
+      "now_playing": null,
+      "number": 9,
+      "subgroup": "Movies",
+      "type": "24_7"
+    },
+    {
+      "category_id": "group:General",
+      "group": "General",
+      "id": "s-gen-1",
+      "name": "Mystery Channel",
+      "now_playing": null,
+      "number": 10,
+      "subgroup": null,
+      "type": "iptv"
+    },
+    {
+      "category_id": "canonical:NHL",
+      "group": "US| NHL PACKAGE",
+      "id": "s-nhlp-1",
+      "name": "NHL Center Ice 1",
+      "now_playing": null,
+      "number": 11,
+      "subgroup": null,
+      "type": "iptv"
+    },
+    {
+      "category_id": "canonical:NHL",
+      "group": "AM | USA NHL",
+      "id": "s-nhl-2",
+      "name": "NHL Network",
+      "now_playing": null,
+      "number": 12,
+      "subgroup": null,
+      "type": "iptv"
+    },
+    {
+      "category_id": "group:User Streams",
+      "group": "User Streams",
+      "id": "r-2",
+      "name": "Plan Broadcaster",
+      "now_playing": null,
+      "number": 13,
+      "subgroup": null,
+      "type": "user_rtmp"
+    },
+    {
+      "category_id": "group:UK| SPORTS",
+      "group": "UK| SPORTS",
+      "id": "s-uk-2",
+      "name": "Racing TV",
+      "now_playing": null,
+      "number": 14,
+      "subgroup": "Racing",
+      "type": "iptv"
+    },
+    {
+      "category_id": "group:UK| SPORTS",
+      "group": "UK| SPORTS",
+      "id": "s-uk-1",
+      "name": "Sky Sports Football",
+      "now_playing": {
+        "description": "Live football",
+        "start": "2026-09-14T14:00:00+00:00",
+        "stop": "2026-09-14T16:00:00+00:00",
+        "title": "Premier League"
+      },
+      "number": 15,
+      "subgroup": "Football",
+      "type": "iptv"
+    },
+    {
+      "category_id": "group:Studio",
+      "group": "Studio",
+      "id": "s-rtmp-1",
+      "name": "Studio Feed",
+      "now_playing": null,
+      "number": 16,
+      "subgroup": null,
+      "type": "rtmp"
+    },
+    {
+      "category_id": "group:24/7 Classics",
+      "group": "24/7 Classics",
+      "id": "s-247-1",
+      "name": "Tom & Jerry 24/7",
+      "now_playing": {
+        "description": "Classic <cartoons>",
+        "start": "2026-09-14T15:30:00+00:00",
+        "stop": "2026-09-14T16:00:00+00:00",
+        "title": "Tom & Jerry"
+      },
+      "number": 17,
+      "subgroup": "Cartoons",
+      "type": "24_7"
+    }
+  ],
+  "viewer": {
+    "access_mode": "full",
+    "can_view_counts": false,
+    "plan_status": null
+  }
+}

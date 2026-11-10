@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "not_entitled",
+    "message": "This channel isn't included in your current plan."
+  }
+}

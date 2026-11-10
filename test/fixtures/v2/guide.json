@@ -1,0 +1,63 @@
+{
+  "categories": [
+    {
+      "hidden": false,
+      "icon": "🏒",
+      "id": "canonical:NHL",
+      "is_priority": false,
+      "kind": "canonical",
+      "name": "NHL",
+      "section": "channels",
+      "stream_ids": [
+        "s-nhl-1",
+        "s-nhl-2"
+      ]
+    }
+  ],
+  "channels": [
+    {
+      "category_id": "canonical:NHL",
+      "id": "s-nhl-1",
+      "name": "11:10 AM ET - Bruins @ Rangers",
+      "number": 4,
+      "programmes": [
+        {
+          "description": "Bruins at Rangers",
+          "is_on_now": true,
+          "start": "2026-09-14T15:00:00+00:00",
+          "stop": "2026-09-14T18:00:00+00:00",
+          "title": "NHL Hockey"
+        },
+        {
+          "description": "",
+          "is_on_now": false,
+          "start": "2026-09-14T18:00:00+00:00",
+          "stop": "2026-09-14T19:00:00+00:00",
+          "title": "NHL Tonight"
+        }
+      ],
+      "type": "iptv"
+    },
+    {
+      "category_id": "canonical:NHL",
+      "id": "s-nhl-2",
+      "name": "NHL Network",
+      "number": 12,
+      "programmes": [
+        {
+          "description": "",
+          "is_on_now": true,
+          "start": "2026-09-14T15:00:00+00:00",
+          "stop": "2026-09-14T16:00:00+00:00",
+          "title": "NHL Now"
+        }
+      ],
+      "type": "iptv"
+    }
+  ],
+  "window": {
+    "horizon_days": 7,
+    "hours": 12,
+    "start": "2026-09-14T15:00:00+00:00"
+  }
+}

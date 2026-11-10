@@ -1,0 +1,17 @@
+{
+  "capacity_full": true,
+  "popular_ids": [
+    "r-1",
+    "s-247-1",
+    "s-nhl-1",
+    "r-2",
+    "s-uk-1"
+  ],
+  "states": {
+    "s-nhl-1": "running",
+    "s-nhl-2": "retrying",
+    "s-nhlp-1": "paused",
+    "s-rtmp-1": "running",
+    "s-uk-1": "unavailable"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "capacity": {
+    "active": 2,
+    "total": 2
+  },
+  "capacity_full": true,
+  "popular_ids": [
+    "s-nhl-1",
+    "r-1",
+    "r-2",
+    "s-uk-1",
+    "s-247-1"
+  ],
+  "states": {
+    "s-nhl-1": "running",
+    "s-nhl-2": "retrying",
+    "s-nhlp-1": "paused",
+    "s-rtmp-1": "running",
+    "s-uk-1": "unavailable"
+  },
+  "viewer_counts": {
+    "r-1": 2,
+    "s-247-1": 2,
+    "s-nhl-1": 3,
+    "s-uk-1": 1
+  }
+}
