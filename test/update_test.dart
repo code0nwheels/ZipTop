@@ -159,6 +159,39 @@ void main() {
       now = now.add(const Duration(hours: 7));
       expect((await service.autoCheck())!.version, '1.4.0');
     });
+
+    test('remembers the update on offer after "Later" and across restarts', () async {
+      expect(service.available.value, isNull);
+      final update = await service.autoCheck();
+      service.dismiss(update!);
+      expect(service.available.value?.version, '1.3.0', reason: 'Later keeps the button');
+
+      UpdateService restarted({required String version}) => UpdateService(
+            settings: settings,
+            currentVersion: version,
+            http: Dio()..httpClientAdapter = adapter,
+            clock: () => now,
+            platform: UpdatePlatform.windows,
+          );
+
+      final again = restarted(version: '1.2.0');
+      expect(again.available.value?.version, '1.3.0');
+      expect(again.available.value?.downloadUrl, endsWith('/ZipTop-Setup-1.3.0.exe'));
+      expect(adapter.requests, hasLength(1), reason: 'restored without asking GitHub');
+
+      final installed = restarted(version: '1.3.0');
+      expect(installed.available.value, isNull);
+      expect(settings.knownUpdate, isNull);
+    });
+
+    test('a check that finds nothing clears the update on offer', () async {
+      await service.check();
+      expect(service.available.value, isNotNull);
+      adapter.body = release('v1.2.0');
+      await service.check();
+      expect(service.available.value, isNull);
+      expect(settings.knownUpdate, isNull);
+    });
   });
 
   group('UpdateService on Linux', () {

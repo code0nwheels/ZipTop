@@ -78,7 +78,20 @@ class UpdateService {
   })  : _http = http ?? Dio(),
         platform = platform ?? _hostPlatform(),
         environment = environment ?? Platform.environment,
-        _appBundleOverride = appBundle;
+        _appBundleOverride = appBundle {
+    final known = settings.knownUpdate;
+    if (known != null && isNewerVersion(known.version, currentVersion)) {
+      available.value = UpdateInfo(version: known.version, downloadUrl: known.url);
+    } else if (known != null) {
+      // Installed since; nothing left to offer.
+      settings.knownUpdate = null;
+    }
+  }
+
+  /// The newer release on offer, kept after "Later" so the app can keep
+  /// showing that it is there. Null when this build is current, can't update
+  /// itself, or hasn't checked yet.
+  final available = ValueNotifier<UpdateInfo?>(null);
 
   static UpdatePlatform? _hostPlatform() {
     if (Platform.isWindows) return UpdatePlatform.windows;
@@ -186,6 +199,14 @@ class UpdateService {
   /// no usable answer, including when the repository is private or has no
   /// releases yet.
   Future<UpdateInfo?> check() async {
+    final update = await _fetch();
+    available.value = update;
+    settings.knownUpdate =
+        update == null ? null : (version: update.version, url: update.downloadUrl);
+    return update;
+  }
+
+  Future<UpdateInfo?> _fetch() async {
     final assetName = _assetName;
     if (assetName == null || !await _canUpdate()) return null;
 

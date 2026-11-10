@@ -63,12 +63,14 @@ final appVersionProvider = Provider<String>((ref) => '0.0.0');
 /// Start-at-sign-in: the Run key on Windows, an XDG autostart entry on Linux.
 final startupRegistrationProvider = Provider<Autostart>((ref) => Autostart());
 
-final updateServiceProvider = Provider<UpdateService>(
-  (ref) => UpdateService(
+final updateServiceProvider = Provider<UpdateService>((ref) {
+  final service = UpdateService(
     settings: ref.watch(settingsStoreProvider),
     currentVersion: ref.watch(appVersionProvider),
-  ),
-);
+  );
+  ref.onDispose(service.available.dispose);
+  return service;
+});
 
 /// One count of who is using each stream, shared by the player, multiview
 /// and recordings.

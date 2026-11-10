@@ -61,6 +61,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   late final LiveController _live;
   late final MultiviewController _multi;
   late final DvrService _dvr;
+  late final UpdateService _updates;
 
   final _focus = FocusNode(debugLabel: 'shell');
   final _searchFocus = FocusNode(debugLabel: 'search');
@@ -96,6 +97,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     _guide = ref.read(guideRepositoryProvider);
     final slots = ref.read(streamSlotsProvider);
     _dvr = ref.read(dvrServiceProvider);
+    _updates = ref.read(updateServiceProvider);
     _session = PlaybackSession(ref.read(streamsApiProvider), slots: slots);
     _player = MpvPlayer(config: ref.read(apiConfigProvider));
     _live = LiveController(
@@ -551,8 +553,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   }
 
   Future<void> _autoCheckForUpdate() async {
-    final service = ref.read(updateServiceProvider);
-    final update = await service.autoCheck();
+    final update = await _updates.autoCheck();
     if (update != null && mounted && !_hiddenAway) await _offerUpdate(update);
   }
 
@@ -561,7 +562,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       context: context,
       barrierDismissible: false,
       builder: (context) => UpdateDialog(
-        service: ref.read(updateServiceProvider),
+        service: _updates,
         update: update,
         onInstall: _quit,
       ),
@@ -576,7 +577,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
         settings: _settings,
         catalog: _catalog,
         authApi: ref.read(authApiProvider),
-        updates: ref.read(updateServiceProvider),
+        updates: _updates,
         startup: ref.read(startupRegistrationProvider),
         onUpdate: (update) {
           Navigator.of(context).pop();
@@ -728,7 +729,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
         autofocus: true,
         onKeyEvent: _onKey,
         child: ListenableBuilder(
-          listenable: Listenable.merge([_live, _catalog, _settings, _dvr]),
+          listenable: Listenable.merge([_live, _catalog, _settings, _dvr, _updates.available]),
           builder: (context, _) {
             if (_booting && !_catalog.isLoaded) {
               return const Center(child: CircularProgressIndicator());
@@ -853,6 +854,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
                       _showView(_view == _View.recordings ? _View.live : _View.recordings),
                   onSearch: _focusSearch,
                   onSettings: _openSettings,
+                  update: _updates.available.value,
+                  onUpdate: (update) => unawaited(_offerUpdate(update)),
                 ),
                 if (_view == _View.multiview)
                   Expanded(child: multiview)
@@ -894,6 +897,8 @@ class _NavRail extends StatelessWidget {
     required this.onRecordings,
     required this.onSearch,
     required this.onSettings,
+    required this.update,
+    required this.onUpdate,
   });
 
   final bool guideOpen;
@@ -910,8 +915,13 @@ class _NavRail extends StatelessWidget {
   final VoidCallback onSearch;
   final VoidCallback onSettings;
 
+  /// A newer ZipTop waiting to be installed, if any.
+  final UpdateInfo? update;
+  final ValueChanged<UpdateInfo> onUpdate;
+
   @override
   Widget build(BuildContext context) {
+    final update = this.update;
     return Container(
       width: 64,
       decoration: const BoxDecoration(
@@ -958,12 +968,96 @@ class _NavRail extends StatelessWidget {
             icon: Icons.search,
           ),
           const Spacer(),
+          if (update != null) ...[
+            _UpdateButton(update: update, onPressed: () => onUpdate(update)),
+            const SizedBox(height: 8),
+          ],
           _RailButton(
             tooltip: 'Settings',
             onPressed: onSettings,
             icon: Icons.settings_outlined,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Stays in the rail while a newer ZipTop is waiting, even after "Later":
+/// a green tile with a label and a gently pulsing glow, so it is noticed
+/// without getting in the way.
+class _UpdateButton extends StatefulWidget {
+  const _UpdateButton({required this.update, required this.onPressed});
+
+  final UpdateInfo update;
+  final VoidCallback onPressed;
+
+  @override
+  State<_UpdateButton> createState() => _UpdateButtonState();
+}
+
+class _UpdateButtonState extends State<_UpdateButton> with SingleTickerProviderStateMixin {
+  late final _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1600),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Update to ZipTop ${widget.update.version}',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: widget.onPressed,
+          borderRadius: ZipRadius.mdAll,
+          hoverColor: ZipColors.successDim,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AnimatedBuilder(
+                  animation: _pulse,
+                  builder: (context, child) => DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: ZipColors.success,
+                      borderRadius: ZipRadius.mdAll,
+                      boxShadow: [
+                        BoxShadow(
+                          color: ZipColors.success.withValues(alpha: 0.15 + 0.35 * _pulse.value),
+                          blurRadius: 4 + 8 * _pulse.value,
+                          spreadRadius: 1 + 2 * _pulse.value,
+                        ),
+                      ],
+                    ),
+                    child: child,
+                  ),
+                  child: const SizedBox(
+                    width: 40,
+                    height: 40,
+                    child: Icon(Icons.download_rounded, size: 24, color: ZipColors.page),
+                  ),
+                ),
+                const SizedBox(height: 5),
+                const Text(
+                  'Update',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: ZipColors.successText,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
