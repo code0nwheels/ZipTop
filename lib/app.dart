@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/auth/auth_events.dart';
-import 'features/live/live_screen.dart';
 import 'features/login/login_screen.dart';
+import 'features/shell/shell_screen.dart';
 import 'providers.dart';
 import 'theme.dart';
 
@@ -120,8 +120,8 @@ class _AppRootState extends ConsumerState<AppRoot> {
     return switch (_signedIn) {
       null => const Scaffold(body: Center(child: CircularProgressIndicator())),
       false => LoginScreen(onPaired: () => setState(() => _signedIn = true)),
-      true => LiveScreen(
-          key: const ValueKey('live'),
+      true => ShellScreen(
+          key: const ValueKey('shell'),
           onSignedOut: () => setState(() => _signedIn = false),
         ),
     };

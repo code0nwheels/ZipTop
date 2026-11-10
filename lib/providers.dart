@@ -8,6 +8,7 @@ import 'core/api/streams_v2_api.dart';
 import 'core/auth/auth_events.dart';
 import 'core/auth/token_store.dart';
 import 'core/stores/catalog_store.dart';
+import 'core/stores/settings_store.dart';
 
 final apiConfigProvider = Provider<ApiConfig>((ref) => ApiConfig());
 
@@ -40,3 +41,8 @@ final catalogStoreProvider = Provider<CatalogStore>((ref) {
   ref.onDispose(store.dispose);
   return store;
 });
+
+/// Loaded before the app starts and supplied through a ProviderScope override.
+final settingsStoreProvider = Provider<SettingsStore>(
+  (ref) => throw StateError('settingsStoreProvider must be overridden in main()'),
+);

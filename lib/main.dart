@@ -4,12 +4,15 @@ import 'package:media_kit/media_kit.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
+import 'core/stores/settings_store.dart';
+import 'providers.dart';
 import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   await windowManager.ensureInitialized();
+  final settings = await SettingsStore.load();
 
   const options = WindowOptions(
     size: Size(1280, 760),
@@ -23,5 +26,10 @@ Future<void> main() async {
     await windowManager.focus();
   });
 
-  runApp(const ProviderScope(child: ZipTopApp()));
+  runApp(
+    ProviderScope(
+      overrides: [settingsStoreProvider.overrideWithValue(settings)],
+      child: const ZipTopApp(),
+    ),
+  );
 }
