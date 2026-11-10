@@ -7,7 +7,8 @@ abstract class TokenStore {
   Future<void> clear();
 }
 
-/// Token kept in the OS credential vault (Windows Credential Manager).
+/// Token kept in the OS credential vault (Credential Manager on Windows, the
+/// Secret Service keyring on Linux).
 class SecureTokenStore implements TokenStore {
   SecureTokenStore([FlutterSecureStorage? storage])
       : _storage = storage ?? const FlutterSecureStorage();
