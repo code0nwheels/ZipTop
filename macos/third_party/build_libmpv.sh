@@ -171,7 +171,9 @@ if ! built "ffmpeg-$FFMPEG_VERSION"; then
     cd "$src/ffmpeg"
     # Nothing is picked up by accident: every external library is named.
     # Secure Transport for TLS (no OpenSSL to bundle), VideoToolbox for
-    # hardware decoding. No GPL or non-free parts.
+    # hardware decoding. No GPL or non-free parts. iconv is not in libSystem
+    # on macOS but in /usr/lib/libiconv.2.dylib, and configure's check
+    # passes without adding it, so libavcodec failed to link.
     ./configure \
       --prefix="$stage" \
       --install-name-dir='@rpath' \
@@ -180,6 +182,7 @@ if ! built "ffmpeg-$FFMPEG_VERSION"; then
       --disable-autodetect \
       --extra-cflags="-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" \
       --extra-ldflags="-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET $LDFLAGS" \
+      --extra-libs=-liconv \
       --enable-securetransport \
       --enable-videotoolbox --enable-audiotoolbox \
       --enable-zlib --enable-iconv \
