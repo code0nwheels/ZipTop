@@ -1,20 +1,31 @@
 name: Build Windows installer
 
-# Every merge to main produces ZipTop-Setup-<version>.exe as a downloadable
-# artifact of the run. It can also be started by hand from the Actions tab.
+# - Every merge to main builds a test installer, versioned as the next
+#   patch with -dev.<run> (e.g. 1.2.4-dev.57), attached to the run.
+# - Pushing a tag v1.2.3, or running this by hand on main with a version
+#   typed in, builds 1.2.3 and publishes it as a GitHub Release with the
+#   installer attached. Installed copies of ZipTop offer it as an update.
 on:
   push:
     branches:
       - main
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, e.g. 1.2.0. Leave empty for a test build.'
+        required: false
+        default: ''
 
 permissions:
-  contents: read
+  # Publishing a release creates its tag.
+  contents: write
 
-# A newer merge makes an older, still-running build pointless.
 concurrency:
   group: installer-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer merge makes an older test build pointless; a release always finishes.
+  cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'push' }}
 
 jobs:
   installer:
@@ -24,6 +35,21 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v4
+        with:
+          # Tags are needed to number test builds after the latest release.
+          fetch-depth: 0
+
+      - name: Work out the version
+        id: version
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: >
+          ./tool/resolve_version.ps1
+          -RefType '${{ github.ref_type }}'
+          -RefName '${{ github.ref_name }}'
+          -InputVersion "$env:INPUT_VERSION"
+          -RunNumber ${{ github.run_number }}
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -62,19 +88,32 @@ jobs:
 
       - name: Build release and installer
         shell: pwsh
-        run: ./tool/build_installer.ps1
-
-      - name: Read version
-        id: version
-        shell: pwsh
-        run: |
-          $line = Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)' | Select-Object -First 1
-          "version=$($line.Matches[0].Groups[1].Value)" >> $env:GITHUB_OUTPUT
+        run: >
+          ./tool/build_installer.ps1
+          -Version '${{ steps.version.outputs.version }}'
+          -BuildNumber ${{ steps.version.outputs.build_number }}
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: ZipTop-Setup-${{ steps.version.outputs.version }}-${{ github.sha }}
+          name: ZipTop-Setup-${{ steps.version.outputs.version }}
           path: installer/output/ZipTop-Setup-*.exe
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish release
+        if: steps.version.outputs.release == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $tag = "v$env:VERSION"
+          $setup = "installer/output/ZipTop-Setup-$env:VERSION.exe"
+          # For a pushed tag the tag exists; for a manual run this creates it
+          # at the commit that was built.
+          gh release create $tag $setup `
+            --title "ZipTop $env:VERSION" `
+            --target $env:GITHUB_SHA `
+            --generate-notes
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing the release failed.' }

@@ -65,8 +65,6 @@ final startupRegistrationProvider =
 
 final updateServiceProvider = Provider<UpdateService>(
   (ref) => UpdateService(
-    client: ref.watch(apiClientProvider),
-    config: ref.watch(apiConfigProvider),
     settings: ref.watch(settingsStoreProvider),
     currentVersion: ref.watch(appVersionProvider),
   ),
