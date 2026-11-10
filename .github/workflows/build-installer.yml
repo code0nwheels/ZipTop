@@ -235,14 +235,22 @@ jobs:
           cache: true
 
       # macos/third_party/build_libmpv.sh builds libmpv 0.42 and FFmpeg from
-      # pinned sources (several minutes); keep the result between runs.
-      - name: Cache libmpv
-        uses: actions/cache@v4
+      # pinned sources (several minutes); keep the result between runs. It
+      # is saved even when the build fails: the script marks each finished
+      # library, so the next run carries on from the one that failed.
+      - name: Restore libmpv
+        id: libmpv-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             macos/third_party/libmpv
             !macos/third_party/libmpv/src
-          key: libmpv-macos-${{ hashFiles('macos/third_party/build_libmpv.sh') }}
+          key: libmpv-macos-${{ hashFiles('macos/third_party/build_libmpv.sh') }}-${{ github.run_id }}
+          # Only builds made by this exact script: its marks name versions,
+          # not options, so an older script's half-built libraries must not
+          # be picked up.
+          restore-keys: |
+            libmpv-macos-${{ hashFiles('macos/third_party/build_libmpv.sh') }}-
 
       - name: Get packages
         run: flutter pub get
@@ -258,6 +266,15 @@ jobs:
           ./tool/build_dmg.sh
           --version '${{ needs.version.outputs.version }}'
           --build-number ${{ needs.version.outputs.build_number }}
+
+      - name: Save libmpv
+        if: always() && steps.libmpv-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            macos/third_party/libmpv
+            !macos/third_party/libmpv/src
+          key: libmpv-macos-${{ hashFiles('macos/third_party/build_libmpv.sh') }}-${{ github.run_id }}
 
       # Nobody can watch a channel play here, so check what can be checked:
       # the bundled libmpv loads on its own and is new enough for DASH...

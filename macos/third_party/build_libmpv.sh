@@ -255,17 +255,23 @@ if ! built "mpv-$MPV_VERSION"; then
     # Only libmpv with the render API is used (media_kit_video draws through
     # OpenGL), so mpv's own windowing, scripting and players are left out.
     # videotoolbox-gl (zero-copy hardware decoding into GL textures) needs
-    # gl-cocoa, which needs cocoa; without cplayer, cocoa does not need the
-    # Swift parts, which stay off along with cocoa-cb (mpv's own libmpv
-    # view). Auto features are off so the build never depends on whatever
-    # happens to be installed. Option names are from mpv 0.42's
-    # meson.options.
+    # gl-cocoa, which needs cocoa, and in mpv 0.42 cocoa needs the Swift
+    # parts (osdep/mac/app_bridge.m and player/clipboard/clipboard-mac.m
+    # include the generated osdep/mac/swift.h). Swift is built for the same
+    # target as everything else and sees this build's headers. cocoa-cb
+    # (mpv's own libmpv view), the media keys / Now Playing hook and the
+    # Touch Bar stay off: media_kit has its own view, and ZipTop should not
+    # take over the system's media controls. Auto features are off so the
+    # build never depends on whatever happens to be installed. Option names
+    # are from mpv 0.42's meson.options.
     meson setup build "${meson_common[@]}" -Ddefault_library=shared \
       --auto-features=disabled \
       -Dlibmpv=true -Dcplayer=false -Dtests=false \
       -Dgl=enabled -Dplain-gl=enabled \
       -Dcocoa=enabled -Dgl-cocoa=enabled -Dvideotoolbox-gl=enabled \
-      -Dswift-build=disabled -Dmacos-cocoa-cb=disabled \
+      -Dswift-build=enabled \
+      -Dswift-flags="-target arm64-apple-macosx$MACOSX_DEPLOYMENT_TARGET -Xcc -I$stage/include" \
+      -Dmacos-cocoa-cb=disabled -Dmacos-media-player=disabled -Dmacos-touchbar=disabled \
       -Dcoreaudio=enabled \
       -Diconv=enabled -Dzlib=enabled
     meson install -C build
