@@ -252,6 +252,24 @@ if ! built "mpv-$MPV_VERSION"; then
   unpack "mpv-$MPV_VERSION.tar.gz" mpv
   (
     cd "$src/mpv"
+    # mpv 0.42 bug: video/out/mac/view.swift uses MetalLayer whenever cocoa
+    # and Swift are on, but meson.build compiles metal_layer.swift (where it
+    # is defined) only with Vulkan. Upstream builds always have Vulkan or
+    # cocoa-cb, so it goes unnoticed. Guard the check the way mpv guards
+    # its other optional features; without Vulkan the layer is never a
+    # MetalLayer. (unpack starts from a clean tree, so this applies once.)
+    python3 - video/out/mac/view.swift <<'PATCH'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+old = """        if let metalLayer = layer as? MetalLayer {
+            return !metalLayer.isOpaque
+        }
+"""
+if old not in text:
+    sys.exit("view.swift no longer has the MetalLayer check; drop this patch")
+open(path, "w").write(text.replace(old, "#if HAVE_VULKAN\n" + old + "#endif\n", 1))
+PATCH
     # Only libmpv with the render API is used (media_kit_video draws through
     # OpenGL), so mpv's own windowing, scripting and players are left out.
     # videotoolbox-gl (zero-copy hardware decoding into GL textures) needs
@@ -272,6 +290,8 @@ if ! built "mpv-$MPV_VERSION"; then
       -Dswift-build=enabled \
       -Dswift-flags="-target arm64-apple-macosx$MACOSX_DEPLOYMENT_TARGET -Xcc -I$stage/include" \
       -Dmacos-cocoa-cb=disabled -Dmacos-media-player=disabled -Dmacos-touchbar=disabled \
+      -Dmacos-10-15-4-features=enabled -Dmacos-11-features=enabled \
+      -Dmacos-11-3-features=enabled -Dmacos-12-features=enabled \
       -Dcoreaudio=enabled \
       -Diconv=enabled -Dzlib=enabled
     meson install -C build
