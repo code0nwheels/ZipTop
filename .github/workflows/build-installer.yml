@@ -1,11 +1,15 @@
 name: Build and release
 
-# - Every merge to main builds a test Windows installer and a test Linux
-#   AppImage, versioned as the next patch with -dev.<run> (e.g.
-#   1.2.4-dev.57), attached to the run.
+# - Every merge to main is released: the latest v* tag plus a patch bump
+#   (v1.2.3 -> 1.2.4), or a minor or major one when the merged pull request
+#   is labelled release:minor or release:major. The Windows installer and
+#   the Linux AppImage are published as GitHub Release v1.2.4, which also
+#   creates the tag. Installed copies of ZipTop offer it as an update.
+# - A pull request labelled release:skip (docs, CI) only makes test builds,
+#   versioned as the next patch with -dev.<run> (e.g. 1.2.4-dev.57) and
+#   attached to the run.
 # - Pushing a tag v1.2.3, or running this by hand on main with a version
-#   typed in, builds 1.2.3 and publishes it as a GitHub Release with both
-#   attached. Installed copies of ZipTop offer it as an update.
+#   typed in, releases exactly 1.2.3.
 on:
   push:
     branches:
@@ -20,13 +24,19 @@ on:
         default: ''
 
 permissions:
-  # Publishing a release creates its tag.
+  # Publishing a release creates its tag. (A tag made with this workflow's
+  # token does not start the workflow again.)
   contents: write
+  # Reading the merged pull request's labels.
+  pull-requests: read
 
+# One build at a time, never cancelled: each one may be a release, and the
+# next version is worked out from the tags the previous one made. If several
+# merges queue up, GitHub keeps only the newest waiting run, which includes
+# the others' changes.
 concurrency:
-  group: installer-${{ github.ref }}
-  # A newer merge makes an older test build pointless; a release always finishes.
-  cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'push' }}
+  group: build-and-release
+  cancel-in-progress: false
 
 env:
   # Keep in step with the version used for local builds.
@@ -44,20 +54,40 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
         with:
-          # Tags are needed to number test builds after the latest release.
+          # Tags are needed to number builds after the latest release.
           fetch-depth: 0
+
+      # A push to main is a merged pull request (or a direct push, which has
+      # no labels and so gets a patch release).
+      - name: Read the release label
+        id: bump
+        if: github.event_name == 'push' && github.ref_type == 'branch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          labels="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].labels[].name' || true)"
+          case "$labels" in
+            *release:skip*) bump=none ;;
+            *release:major*) bump=major ;;
+            *release:minor*) bump=minor ;;
+            *) bump=patch ;;
+          esac
+          echo "Labels: ${labels:-none}; bump: $bump"
+          echo "bump=$bump" >> "$GITHUB_OUTPUT"
 
       - name: Work out the version
         id: version
         shell: pwsh
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          BUMP: ${{ steps.bump.outputs.bump || 'none' }}
         run: >
           ./tool/resolve_version.ps1
           -RefType '${{ github.ref_type }}'
           -RefName '${{ github.ref_name }}'
           -InputVersion "$env:INPUT_VERSION"
           -RunNumber ${{ github.run_number }}
+          -Bump "$env:BUMP"
 
   windows:
     name: Windows installer
