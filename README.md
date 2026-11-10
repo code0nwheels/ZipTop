@@ -64,11 +64,26 @@ Debug builds also read two environment variables, for testing from scripts:
 
 Versions come from git tags, not from `pubspec.yaml`.
 
-- **Test builds:** every merge to `main` builds a Windows installer and a
-  Linux AppImage numbered as the next patch after the latest release, e.g.
-  `1.2.4-dev.57` (57 is the CI run number). They are attached to the run
-  under *Artifacts* for 30 days and are never offered as updates.
-- **Releases:** either push a tag, or run *Build and release* from the
+- **Every merge to `main` is a release.** CI takes the latest `v*` tag and
+  bumps it according to the merged pull request's label:
+
+  | Label | Example |
+  |---|---|
+  | none (or a direct push) | `v1.2.3` → `1.2.4` |
+  | `release:minor` | `v1.2.3` → `1.3.0` |
+  | `release:major` | `v1.2.3` → `2.0.0` |
+  | `release:skip` | no release, only a test build |
+
+  It builds that version and publishes GitHub Release `v1.2.4` with
+  `ZipTop-Setup-1.2.4.exe`, `ZipTop-1.2.4-x86_64.AppImage` and notes
+  generated from the merged pull requests. Publishing creates the tag.
+  Builds run one at a time and are never cancelled. If several merges land
+  while one is building, only the newest waits, and its release includes
+  the others.
+- **Test builds:** a `release:skip` merge builds both, numbered as the next
+  patch with the CI run number, e.g. `1.2.4-dev.57`. They are attached to
+  the run under *Artifacts* for 30 days and are never offered as updates.
+- **A specific version:** push a tag, or run *Build and release* from the
   Actions tab on `main` and type the version:
 
   ```
@@ -76,9 +91,6 @@ Versions come from git tags, not from `pubspec.yaml`.
   git push origin v1.3.0
   ```
 
-  CI builds `1.3.0`, then publishes a GitHub Release `v1.3.0` with
-  `ZipTop-Setup-1.3.0.exe`, `ZipTop-1.3.0-x86_64.AppImage` and notes
-  generated from the merged pull requests.
   A version that is already released is refused.
 
 `pubspec.yaml`'s version is only the starting number before the first tag,
