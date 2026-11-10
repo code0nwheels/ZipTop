@@ -269,6 +269,8 @@ void main() {
       expect(add, contains(StartupRegistration.runKey));
       expect(add, contains(r'"C:\Apps\ZipTop\ziptop.exe" --minimized'));
       expect(calls.every((c) => c.contains('ZipTop')), isTrue);
-    });
+      // The Run key exists only on Windows; elsewhere StartupRegistration
+      // does nothing (XdgAutostart is tested in startup_test.dart).
+    }, skip: Platform.isWindows ? false : 'The Run key is Windows-only');
   });
 }
