@@ -49,3 +49,6 @@ app.*.map.json
 
 # Pinned libmpv archive, downloaded by windows/CMakeLists.txt
 /windows/third_party/
+
+# Installer output
+/installer/output/

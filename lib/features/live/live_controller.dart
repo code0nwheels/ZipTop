@@ -96,7 +96,10 @@ class LiveController extends ChangeNotifier {
   }
 
   /// Loads the catalogue and, if the viewer wants it, resumes the last channel.
-  Future<void> boot() async {
+  ///
+  /// With [autoplay] false nothing is tuned, for a start hidden in the
+  /// notification area.
+  Future<void> boot({bool autoplay = true}) async {
     await catalog.refresh();
     unawaited(catalog.refreshLiveIfStale());
     _pollTimer?.cancel();
@@ -106,6 +109,11 @@ class LiveController extends ChangeNotifier {
     });
     unawaited(player.player.setVolume(settings.volume));
 
+    if (!autoplay) return;
+    await _tuneLast();
+  }
+
+  Future<void> _tuneLast() async {
     if (!settings.playLastOnStart) return;
     final channels = catalog.allChannels;
     if (channels.isEmpty) return;
@@ -234,7 +242,7 @@ class LiveController extends ChangeNotifier {
     await session.close();
   }
 
-  Future<void> resume() => retryNow();
+  Future<void> resume() => _current == null ? _tuneLast() : retryNow();
 
   /// Stops playback and releases the server slot (sign-out, app exit).
   Future<void> shutdown() async {

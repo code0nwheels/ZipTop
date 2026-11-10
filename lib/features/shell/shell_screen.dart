@@ -28,6 +28,8 @@ import '../recordings/record_actions.dart';
 import '../recordings/recording_player.dart';
 import '../recordings/recordings_view.dart';
 import '../settings/settings_dialog.dart';
+import '../update/update_dialog.dart';
+import '../update/update_service.dart';
 
 /// The signed-in app: a slim navigation rail, the channel panel and the video.
 ///
@@ -67,6 +69,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   bool _booting = true;
   bool _closing = false;
   bool _inTray = false;
+  bool _startedHidden = false;
+  Timer? _bootRetry;
   bool _liveSuspended = false;
   Recording? _playing;
   bool _playingFromStart = false;
@@ -112,9 +116,19 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       _booting = true;
       _bootError = null;
     });
+    // Recordings do not need the channel list, so the recorder starts first:
+    // at Windows sign-in the network may not be up yet.
+    _dvr.start();
+    final startHidden = ref.read(startHiddenProvider) && !_startedHidden;
+    if (startHidden) {
+      // Started with Windows: go straight to the notification area.
+      _startedHidden = true;
+      await _hideToTray();
+    }
+    _bootRetry?.cancel();
     try {
-      await _live.boot();
-      _dvr.start();
+      await _live.boot(autoplay: !_inTray);
+      if (!_inTray) unawaited(_autoCheckForUpdate());
       // Open on Favorites when the viewer has some, like the Android guide.
       final favorites = _catalog.category(CategoryIds.favorites);
       if (_categoryId == null && favorites != null && !favorites.hidden) {
@@ -122,6 +136,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       }
     } catch (e) {
       _bootError = "Couldn't load channels. $e";
+      // Nobody is looking at the Retry button while hidden; keep trying.
+      if (_inTray && mounted) _bootRetry = Timer(const Duration(seconds: 30), _boot);
     }
     if (mounted) setState(() => _booting = false);
     // Debug builds only: open straight into a view, for testing from scripts.
@@ -216,7 +232,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     _inTray = true;
     try {
       await trayManager.setIcon('assets/app_icon.ico');
-      await trayManager.setToolTip('ZipTop: recordings scheduled');
+      await trayManager.setToolTip('ZipTop');
       await trayManager.setContextMenu(
         Menu(
           items: [
@@ -480,6 +496,25 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     });
   }
 
+  Future<void> _autoCheckForUpdate() async {
+    final service = ref.read(updateServiceProvider);
+    final update = await service.autoCheck();
+    if (update != null && mounted && !_inTray) await _offerUpdate(update);
+  }
+
+  Future<void> _offerUpdate(UpdateInfo update) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => UpdateDialog(
+        service: ref.read(updateServiceProvider),
+        update: update,
+        onInstall: _quit,
+      ),
+    );
+    _focus.requestFocus();
+  }
+
   Future<void> _openSettings() async {
     await showDialog<void>(
       context: context,
@@ -487,6 +522,12 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
         settings: _settings,
         catalog: _catalog,
         authApi: ref.read(authApiProvider),
+        updates: ref.read(updateServiceProvider),
+        startup: ref.read(startupRegistrationProvider),
+        onUpdate: (update) {
+          Navigator.of(context).pop();
+          unawaited(_offerUpdate(update));
+        },
         onSignOut: () {
           Navigator.of(context).pop();
           unawaited(_signOut());
@@ -612,6 +653,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     trayManager.removeListener(this);
     unawaited(windowManager.setPreventClose(false));
     _controlsTimer?.cancel();
+    _bootRetry?.cancel();
     _settings.removeListener(_multi.refreshAudio);
     _multi.dispose();
     _focus.dispose();

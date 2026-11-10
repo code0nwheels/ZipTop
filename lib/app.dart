@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'core/auth/auth_events.dart';
 import 'features/login/login_screen.dart';
@@ -45,6 +46,8 @@ class _AppRootState extends ConsumerState<AppRoot> {
 
   Future<void> _loadToken() async {
     final token = await ref.read(tokenStoreProvider).read();
+    // Started hidden but not paired: there is nothing to do in the tray.
+    if (token == null && ref.read(startHiddenProvider)) await windowManager.show();
     if (mounted) setState(() => _signedIn = token != null);
   }
 

@@ -28,6 +28,11 @@ bool FlutterWindow::OnCreate() {
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
+    // ZipTop: "--minimized" (start with Windows) keeps the window hidden;
+    // the app then lives in the notification area until it is opened.
+    if (wcsstr(::GetCommandLineW(), L"--minimized") != nullptr) {
+      return;
+    }
     this->Show();
   });
 

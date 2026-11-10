@@ -7,12 +7,14 @@ import 'core/api/streams_api.dart';
 import 'core/api/streams_v2_api.dart';
 import 'core/auth/auth_events.dart';
 import 'core/auth/token_store.dart';
+import 'core/platform/startup.dart';
 import 'core/session/playback_session.dart';
 import 'core/stores/catalog_store.dart';
 import 'core/stores/guide_repository.dart';
 import 'core/stores/settings_store.dart';
 import 'dvr/dvr_service.dart';
 import 'dvr/dvr_store.dart';
+import 'features/update/update_service.dart';
 
 final apiConfigProvider = Provider<ApiConfig>((ref) => ApiConfig());
 
@@ -51,6 +53,24 @@ final guideRepositoryProvider = Provider<GuideRepository>((ref) {
   ref.onDispose(repository.dispose);
   return repository;
 });
+
+/// True when ZipTop was started with `--minimized` (start with Windows).
+final startHiddenProvider = Provider<bool>((ref) => false);
+
+/// This build's version, read before the app starts.
+final appVersionProvider = Provider<String>((ref) => '0.0.0');
+
+final startupRegistrationProvider =
+    Provider<StartupRegistration>((ref) => StartupRegistration());
+
+final updateServiceProvider = Provider<UpdateService>(
+  (ref) => UpdateService(
+    client: ref.watch(apiClientProvider),
+    config: ref.watch(apiConfigProvider),
+    settings: ref.watch(settingsStoreProvider),
+    currentVersion: ref.watch(appVersionProvider),
+  ),
+);
 
 /// One count of who is using each stream, shared by the player, multiview
 /// and recordings.

@@ -19,6 +19,8 @@ class SettingsStore extends ChangeNotifier {
   static const _categoriesOpenKey = 'categories_open';
   static const _multiviewIdsKey = 'multiview_stream_ids';
   static const _multiviewLayoutKey = 'multiview_layout';
+  static const _lastUpdateCheckKey = 'update_last_check_ms';
+  static const _dismissedUpdateKey = 'update_dismissed_version';
 
   final SharedPreferences _prefs;
 
@@ -100,6 +102,30 @@ class SettingsStore extends ChangeNotifier {
       _prefs.setString(_multiviewLayoutKey, name);
     }
     notifyListeners();
+  }
+
+  /// When the server was last asked about updates.
+  DateTime? get lastUpdateCheck {
+    final ms = _prefs.getInt(_lastUpdateCheckKey);
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  set lastUpdateCheck(DateTime? value) {
+    if (value == null) {
+      _prefs.remove(_lastUpdateCheckKey);
+    } else {
+      _prefs.setInt(_lastUpdateCheckKey, value.millisecondsSinceEpoch);
+    }
+  }
+
+  /// A version the viewer chose "Later" for; not offered again by itself.
+  String? get dismissedUpdateVersion => _prefs.getString(_dismissedUpdateKey);
+  set dismissedUpdateVersion(String? value) {
+    if (value == null) {
+      _prefs.remove(_dismissedUpdateKey);
+    } else {
+      _prefs.setString(_dismissedUpdateKey, value);
+    }
   }
 
   /// Forgets what was watched here (sign-out). Preferences stay.
