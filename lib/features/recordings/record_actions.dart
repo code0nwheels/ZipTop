@@ -153,10 +153,9 @@ class RecordButton extends StatelessWidget {
         final title = programme?.title ?? '';
         return PopupMenuButton<_RecordChoice>(
           tooltip: active == null ? 'Record (R)' : 'Recording: ${active.title}',
-          color: ZipColors.surface,
           icon: Icon(
             active == null ? Icons.fiber_manual_record_outlined : Icons.fiber_manual_record,
-            color: active == null ? null : ZipColors.offline,
+            color: active == null ? null : ZipColors.danger,
           ),
           onSelected: (choice) {
             switch (choice) {

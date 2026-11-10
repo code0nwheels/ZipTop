@@ -4,6 +4,9 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../core/session/playback_session.dart';
 import '../../theme.dart';
+import '../../ui/ch_num_chip.dart';
+import '../../ui/segmented_pills.dart';
+import '../../ui/zip_spinner.dart';
 import 'channel_picker_dialog.dart';
 import 'multiview_controller.dart';
 import 'multiview_layout.dart';
@@ -59,59 +62,66 @@ class MultiviewView extends StatelessWidget {
         final full = controller.fullTile;
         final shown = full == null ? tiles : [full];
         return ColoredBox(
-          color: Colors.black,
+          color: ZipColors.page,
           child: Column(
             children: [
               if (!fullscreen) _toolbar(context, tiles.length),
               Expanded(
                 child: tiles.isEmpty
                     ? _empty(context)
-                    : LayoutBuilder(
-                        builder: (context, constraints) {
-                          final rects = layoutTiles(
-                            full == null ? controller.layout : MultiLayout.grid,
-                            shown.length,
-                            constraints.biggest,
-                          );
-                          return Stack(
-                            children: [
-                              for (var i = 0; i < shown.length; i++)
-                                AnimatedPositioned(
-                                  key: ValueKey(shown[i].id),
-                                  duration: const Duration(milliseconds: 180),
-                                  curve: Curves.easeOut,
-                                  left: rects[i].left,
-                                  top: rects[i].top,
-                                  width: rects[i].width,
-                                  height: rects[i].height,
-                                  child: _Tile(
-                                    controller: controller,
-                                    tile: shown[i],
-                                    selected: controller.selected == shown[i],
-                                    isFull: full != null,
-                                    onChange: () => _change(context, shown[i]),
-                                    onAdd: controller.canAdd
-                                        ? () => _add(context)
-                                        : null,
-                                    onInteraction: onInteraction,
-                                  ),
-                                ),
-                              if (tiles.length == 1 && full == null)
-                                Positioned(
-                                  left: 0,
-                                  right: 0,
-                                  bottom: 20,
-                                  child: Center(
-                                    child: FilledButton.tonalIcon(
-                                      onPressed: () => _add(context),
-                                      icon: const Icon(Icons.add),
-                                      label: const Text('Add more screens'),
+                    : Padding(
+                        padding: EdgeInsets.all(fullscreen ? 0 : 6),
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final rects = layoutTiles(
+                              full == null ? controller.layout : MultiLayout.grid,
+                              shown.length,
+                              constraints.biggest,
+                            );
+                            return Stack(
+                              children: [
+                                for (var i = 0; i < shown.length; i++)
+                                  AnimatedPositioned(
+                                    key: ValueKey(shown[i].id),
+                                    duration: const Duration(milliseconds: 180),
+                                    curve: Curves.easeOut,
+                                    left: rects[i].left,
+                                    top: rects[i].top,
+                                    width: rects[i].width,
+                                    height: rects[i].height,
+                                    child: Padding(
+                                      padding: EdgeInsets.all(fullscreen ? 1 : 4),
+                                      child: _Tile(
+                                        controller: controller,
+                                        tile: shown[i],
+                                        selected: controller.selected == shown[i],
+                                        isFull: full != null,
+                                        rounded: !fullscreen,
+                                        onChange: () => _change(context, shown[i]),
+                                        onAdd: controller.canAdd
+                                            ? () => _add(context)
+                                            : null,
+                                        onInteraction: onInteraction,
+                                      ),
                                     ),
                                   ),
-                                ),
-                            ],
-                          );
-                        },
+                                if (tiles.length == 1 && full == null)
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    bottom: 20,
+                                    child: Center(
+                                      child: FilledButton.icon(
+                                        onPressed: () => _add(context),
+                                        icon: const Icon(Icons.add),
+                                        label: const Text('Add more screens'),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
+                        ),
                       ),
               ),
             ],
@@ -123,39 +133,51 @@ class MultiviewView extends StatelessWidget {
 
   Widget _toolbar(BuildContext context, int count) {
     return Container(
-      color: ZipColors.background,
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+      decoration: const BoxDecoration(
+        color: ZipColors.surface,
+        border: Border(bottom: BorderSide(color: ZipColors.line)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 10, 10, 10),
       child: Row(
         children: [
-          Text('Multiview', style: Theme.of(context).textTheme.titleLarge),
+          Text('Multi-view', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(width: 12),
-          Text(
-            '$count of $maxMultiviewTiles screens',
-            style: const TextStyle(color: ZipColors.textMuted),
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '$count',
+                  style: ZipText.mono(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: ZipColors.textSecondary,
+                  ),
+                ),
+                TextSpan(
+                  text: ' of $maxMultiviewTiles screens',
+                  style: const TextStyle(color: ZipColors.textMuted, fontSize: 13),
+                ),
+              ],
+            ),
           ),
           const Spacer(),
-          for (final layout in MultiLayout.values)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: ChoiceChip(
-                label: Text(layout.label),
-                selected: controller.layout == layout,
-                showCheckmark: false,
-                visualDensity: VisualDensity.compact,
-                onSelected: layout.availableFor(count)
-                    ? (_) {
-                        controller.setLayout(layout);
-                        onInteraction();
-                      }
-                    : null,
-              ),
-            ),
-          const SizedBox(width: 6),
+          SegmentedPills<MultiLayout>(
+            values: MultiLayout.values,
+            selected: controller.layout,
+            label: (l) => l.label,
+            enabled: (l) => l.availableFor(count),
+            onSelected: (layout) {
+              controller.setLayout(layout);
+              onInteraction();
+            },
+          ),
+          const SizedBox(width: 12),
           FilledButton.icon(
             onPressed: controller.canAdd ? () => _add(context) : null,
             icon: const Icon(Icons.add, size: 18),
             label: const Text('Add screen'),
           ),
+          const SizedBox(width: 4),
           IconButton(
             tooltip: 'Full screen (F)',
             onPressed: onToggleFullscreen,
@@ -171,9 +193,14 @@ class MultiviewView extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          Text(
+            'Watch up to $maxMultiviewTiles channels at once',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 8),
           const Text(
-            'Watch up to 8 channels at once.',
-            style: TextStyle(color: ZipColors.textSecondary, fontSize: 16),
+            'Click a screen to hear it. Right-click for more.',
+            style: TextStyle(color: ZipColors.textSecondary, fontSize: 15),
           ),
           const SizedBox(height: 16),
           FilledButton.icon(
@@ -195,6 +222,7 @@ class _Tile extends StatefulWidget {
     required this.tile,
     required this.selected,
     required this.isFull,
+    required this.rounded,
     required this.onChange,
     required this.onAdd,
     required this.onInteraction,
@@ -204,6 +232,9 @@ class _Tile extends StatefulWidget {
   final MultiTile tile;
   final bool selected;
   final bool isFull;
+
+  /// Rounded, gapped slots; full screen packs them square and tight.
+  final bool rounded;
   final VoidCallback onChange;
   final VoidCallback? onAdd;
   final VoidCallback onInteraction;
@@ -274,7 +305,6 @@ class _TileState extends State<_Tile> {
         Overlay.of(context).context.findRenderObject()! as RenderBox;
     final action = await showMenu<_TileAction>(
       context: context,
-      color: ZipColors.surface,
       position: RelativeRect.fromRect(
         position & Size.zero,
         Offset.zero & overlay.size,
@@ -310,6 +340,10 @@ class _TileState extends State<_Tile> {
       }
     }
     final warning = session.warningSeconds;
+    final audible = widget.selected &&
+        !widget.isFull &&
+        widget.controller.tiles.length > 1;
+    final radius = widget.rounded ? ZipRadius.mdAll : BorderRadius.zero;
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
@@ -331,19 +365,18 @@ class _TileState extends State<_Tile> {
               _contextMenu(event.position);
             }
           },
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.black,
+          child: AnimatedContainer(
+            duration: ZipMotion.fast,
+            // The screen you hear gets an accent border and ring.
+            foregroundDecoration: BoxDecoration(
+              borderRadius: radius,
               border: Border.all(
-                width: 2,
-                color:
-                    widget.selected &&
-                        !widget.isFull &&
-                        widget.controller.tiles.length > 1
-                    ? ZipColors.accent
-                    : const Color(0xFF111111),
+                width: audible ? 2 : 1,
+                color: audible ? ZipColors.accent : ZipColors.line,
               ),
             ),
+            decoration: BoxDecoration(color: Colors.black, borderRadius: radius),
+            clipBehavior: Clip.antiAlias,
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -354,19 +387,23 @@ class _TileState extends State<_Tile> {
                   controls: NoVideoControls,
                   fill: Colors.black,
                 ),
-                if (busy) const Center(child: CircularProgressIndicator()),
+                if (busy) const Center(child: ZipSpinner()),
                 if (message != null)
                   ColoredBox(
-                    color: Colors.black54,
+                    color: ZipColors.overlayPlayer,
                     child: Center(
                       child: Padding(
                         padding: const EdgeInsets.all(12),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(message, textAlign: TextAlign.center),
+                            Text(
+                              message,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
                             const SizedBox(height: 10),
-                            FilledButton.tonal(
+                            FilledButton(
                               onPressed: () {
                                 if (session.phase == SessionPhase.watchTimeUp) {
                                   session.extendWatch();
@@ -391,35 +428,68 @@ class _TileState extends State<_Tile> {
                       child: Text('Still watching? ($warning s)'),
                     ),
                   ),
+                // A soft scrim behind the options button, on hover only.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  height: 56,
+                  child: IgnorePointer(
+                    child: AnimatedOpacity(
+                      opacity: _hover || _menuOpen ? 1 : 0,
+                      duration: ZipMotion.fast,
+                      child: const DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [Color(0xD9070C18), Colors.transparent],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
                 Positioned(
                   left: 8,
-                  bottom: 6,
-                  right: 44,
+                  bottom: 8,
+                  right: 8,
                   child: Row(
                     children: [
-                      Icon(
-                        widget.selected ? Icons.volume_up : Icons.volume_off,
-                        size: 16,
-                        color: widget.selected
-                            ? ZipColors.accent
-                            : Colors.white54,
-                      ),
-                      const SizedBox(width: 6),
                       Flexible(
-                        child: Text(
-                          [
-                            if (channel.number != null) '${channel.number}',
-                            channel.name,
-                            if (tile.paused) 'Paused',
-                          ].join('  ·  '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            shadows: [
-                              Shadow(blurRadius: 6, color: Colors.black),
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(6, 4, 10, 4),
+                          decoration: const BoxDecoration(
+                            color: ZipColors.overlayPill,
+                            borderRadius: ZipRadius.pillAll,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                widget.selected ? Icons.volume_up : Icons.volume_off,
+                                size: 15,
+                                color: widget.selected
+                                    ? ZipColors.accentText
+                                    : ZipColors.textMuted,
+                              ),
+                              const SizedBox(width: 6),
+                              if (channel.number != null) ...[
+                                ChNumChip(channel.number!),
+                                const SizedBox(width: 6),
+                              ],
+                              Flexible(
+                                child: Text(
+                                  tile.paused ? '${channel.name}  ·  Paused' : channel.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: ZipColors.text,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -435,15 +505,10 @@ class _TileState extends State<_Tile> {
                   right: 4,
                   child: AnimatedOpacity(
                     opacity: _hover || _menuOpen ? 1 : 0,
-                    duration: const Duration(milliseconds: 120),
+                    duration: ZipMotion.fast,
                     child: PopupMenuButton<_TileAction>(
                       tooltip: 'Screen options',
-                      color: ZipColors.surface,
-                      icon: const Icon(
-                        Icons.more_vert,
-                        color: Colors.white,
-                        shadows: [Shadow(blurRadius: 6, color: Colors.black)],
-                      ),
+                      icon: const Icon(Icons.more_vert, color: ZipColors.text),
                       onOpened: () {
                         setState(() => _menuOpen = true);
                         widget.controller.select(tile);

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../core/models/catalog.dart';
 import '../../core/stores/catalog_store.dart';
 import '../../theme.dart';
+import '../../ui/ch_num_chip.dart';
+import '../../ui/channel_hue.dart';
 
 /// Picks one channel: search across everything, or browse a category.
 /// Returns the channel, or null when dismissed.
@@ -82,7 +84,7 @@ class _ChannelPickerDialogState extends State<ChannelPickerDialog> {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 14, 8, 10),
+              padding: const EdgeInsets.fromLTRB(22, 16, 10, 14),
               child: Row(
                 children: [
                   Text(widget.title, style: Theme.of(context).textTheme.titleLarge),
@@ -92,16 +94,13 @@ class _ChannelPickerDialogState extends State<ChannelPickerDialog> {
                       controller: _search,
                       autofocus: true,
                       onChanged: (_) => setState(() {}),
-                      decoration: InputDecoration(
-                        isDense: true,
+                      decoration: const InputDecoration(
                         hintText: 'Search channels and shows',
-                        prefixIcon: const Icon(Icons.search, size: 20),
-                        filled: true,
-                        fillColor: ZipColors.background,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide.none,
+                        prefixIcon: Padding(
+                          padding: EdgeInsets.only(left: 14, right: 8),
+                          child: Icon(Icons.search, size: 19),
                         ),
+                        prefixIconConstraints: BoxConstraints(minWidth: 0, minHeight: 38),
                       ),
                     ),
                   ),
@@ -122,12 +121,13 @@ class _ChannelPickerDialogState extends State<ChannelPickerDialog> {
                     child: Opacity(
                       opacity: query.isEmpty ? 1 : 0.45,
                       child: ListView(
+                        padding: const EdgeInsets.all(6),
                         children: [
                           for (final c in categories)
                             ListTile(
                               dense: true,
+                              visualDensity: VisualDensity.compact,
                               selected: query.isEmpty && c.id == _categoryId,
-                              selectedTileColor: ZipColors.surfaceHigh,
                               title: Text(
                                 c.icon == null || c.icon!.isEmpty
                                     ? c.name
@@ -155,7 +155,8 @@ class _ChannelPickerDialogState extends State<ChannelPickerDialog> {
                           )
                         : ListView.builder(
                             itemCount: channels.length,
-                            itemExtent: 54,
+                            itemExtent: 56,
+                            padding: const EdgeInsets.symmetric(vertical: 4),
                             itemBuilder: (context, index) {
                               final channel = channels[index];
                               final taken = widget.excludeIds.contains(channel.id);
@@ -163,17 +164,31 @@ class _ChannelPickerDialogState extends State<ChannelPickerDialog> {
                               return ListTile(
                                 dense: true,
                                 enabled: !taken,
+                                contentPadding: const EdgeInsets.only(left: 0, right: 12),
                                 leading: SizedBox(
-                                  width: 40,
-                                  child: Text(
-                                    channel.number?.toString() ?? '',
-                                    style: const TextStyle(color: ZipColors.textMuted),
+                                  width: 62,
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 4,
+                                        height: 34,
+                                        decoration: BoxDecoration(
+                                          color: channelStripe(channel.name),
+                                          borderRadius: const BorderRadius.horizontal(
+                                            right: Radius.circular(2),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      if (channel.number != null) ChNumChip(channel.number!),
+                                    ],
                                   ),
                                 ),
                                 title: Text(
                                   channel.name,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontWeight: FontWeight.w700),
                                 ),
                                 subtitle: taken
                                     ? const Text('Already on screen')

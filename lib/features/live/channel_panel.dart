@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import '../../core/models/catalog.dart';
 import '../../core/stores/catalog_store.dart';
 import '../../theme.dart';
+import '../../ui/ch_num_chip.dart';
+import '../../ui/channel_hue.dart';
+import '../../ui/focus_ring.dart';
 import 'live_controller.dart';
 
 /// Id of the local "Recent" row, which the server knows nothing about.
@@ -158,9 +161,12 @@ class _ChannelPanelState extends State<ChannelPanel> {
                     controller: widget.searchController,
                     focusNode: widget.searchFocus,
                     decoration: InputDecoration(
-                      isDense: true,
                       hintText: 'Search channels and shows',
-                      prefixIcon: const Icon(Icons.search, size: 20),
+                      prefixIcon: const Padding(
+                        padding: EdgeInsets.only(left: 14, right: 8),
+                        child: Icon(Icons.search, size: 19),
+                      ),
+                      prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 38),
                       suffixIcon: searching
                           ? IconButton(
                               tooltip: 'Clear',
@@ -168,12 +174,6 @@ class _ChannelPanelState extends State<ChannelPanel> {
                               onPressed: widget.searchController.clear,
                             )
                           : null,
-                      filled: true,
-                      fillColor: ZipColors.background,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide.none,
-                      ),
                     ),
                   ),
                 ),
@@ -203,7 +203,7 @@ class _ChannelPanelState extends State<ChannelPanel> {
                     child: Opacity(
                       opacity: searching ? 0.45 : 1,
                       child: ListView(
-                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        padding: const EdgeInsets.fromLTRB(6, 8, 6, 8),
                         children: [
                           if (showRecents)
                             _CategoryTile(
@@ -317,37 +317,43 @@ class _CategoryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    return Material(
-      color: selected ? ZipColors.surfaceHigh : Colors.transparent,
-      child: InkWell(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: ZipTappable(
         onTap: onTap,
-        child: Container(
-          height: 38,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            border: Border(
-              left: BorderSide(width: 3, color: selected ? ZipColors.accent : Colors.transparent),
-            ),
-          ),
-          child: Row(
-            children: [
-              if (icon != null && icon!.isNotEmpty) ...[
-                Text(icon!, style: const TextStyle(fontSize: 14)),
-                const SizedBox(width: 6),
-              ],
-              Expanded(
-                child: Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: text.bodyMedium?.copyWith(
-                    color: selected ? ZipColors.text : ZipColors.textSecondary,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+        color: selected ? ZipColors.selected : Colors.transparent,
+        hoverColor: selected ? null : ZipColors.hover,
+        child: ClipRRect(
+          borderRadius: ZipRadius.smAll,
+          child: SizedBox(
+            height: 36,
+            child: Row(
+              children: [
+                AnimatedContainer(
+                  duration: ZipMotion.fast,
+                  width: 3,
+                  color: selected ? ZipColors.accent : Colors.transparent,
+                ),
+                const SizedBox(width: 9),
+                if (icon != null && icon!.isNotEmpty) ...[
+                  Text(icon!, style: const TextStyle(fontSize: 14)),
+                  const SizedBox(width: 7),
+                ],
+                Expanded(
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodyMedium?.copyWith(
+                      color: selected ? ZipColors.text : ZipColors.textSecondary,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    ),
                   ),
                 ),
-              ),
-              Text('$count', style: text.bodySmall?.copyWith(color: ZipColors.textMuted)),
-            ],
+                Text('$count', style: ZipText.mono(fontSize: 12)),
+                const SizedBox(width: 10),
+              ],
+            ),
           ),
         ),
       ),
@@ -375,7 +381,6 @@ class _CategoryMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     return PopupMenuButton<String>(
       tooltip: 'Choose a category',
-      color: ZipColors.surface,
       position: PopupMenuPosition.under,
       constraints: const BoxConstraints(minWidth: 240, maxHeight: 520),
       onSelected: onPick,
@@ -397,7 +402,7 @@ class _CategoryMenu extends StatelessWidget {
         height: 40,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: ZipColors.surfaceHigh)),
+          border: Border(bottom: BorderSide(color: ZipColors.line)),
         ),
         child: Row(
           children: [
@@ -406,7 +411,7 @@ class _CategoryMenu extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w600),
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
             const Icon(Icons.arrow_drop_down, color: ZipColors.textSecondary),
@@ -433,7 +438,6 @@ class _FeedChip extends StatelessWidget {
         selected: selected,
         onSelected: (_) => onTap(),
         visualDensity: VisualDensity.compact,
-        showCheckmark: false,
       ),
     );
   }
@@ -489,91 +493,108 @@ class _ChannelRowState extends State<_ChannelRow> {
     final state = catalog.stateOf(channel);
     final viewers = catalog.viewerCount(channel.id);
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: Material(
-        color: widget.selected ? ZipColors.surfaceHigh : Colors.transparent,
-        child: InkWell(
-          onTap: widget.onTap,
-          child: Padding(
-            padding: const EdgeInsets.only(left: 12, right: 4),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 38,
-                  child: Text(
-                    channel.number?.toString() ?? '',
-                    style: text.bodyMedium?.copyWith(color: ZipColors.textMuted),
-                  ),
+    final selected = widget.selected;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(6, 1, 6, 1),
+      child: ZipTappable(
+        onTap: widget.onTap,
+        onHover: (v) => setState(() => _hover = v),
+        color: selected ? ZipColors.selected : Colors.transparent,
+        hoverColor: selected ? null : ZipColors.hover,
+        child: ClipRRect(
+          borderRadius: ZipRadius.smAll,
+          child: Row(
+            children: [
+              // Each channel keeps its own hue, as on the web viewer's tiles.
+              Container(width: 4, color: channelStripe(channel.name)),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 46,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: channel.number == null
+                      ? const SizedBox.shrink()
+                      : ChNumChip(channel.number!),
                 ),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+              ),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      channel.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.bodyLarge?.copyWith(
+                        height: 1.25,
+                        color: selected ? ZipColors.accentText : ZipColors.text,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (title != null && title.isNotEmpty)
                       Text(
-                        channel.name,
+                        title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: text.bodyLarge?.copyWith(
-                          color: widget.selected ? ZipColors.accent : ZipColors.text,
-                          fontWeight: widget.selected ? FontWeight.w600 : FontWeight.w400,
+                        style: text.bodySmall?.copyWith(
+                          height: 1.3,
+                          color: ZipColors.textSecondary,
                         ),
                       ),
-                      if (title != null && title.isNotEmpty)
-                        Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: text.bodySmall?.copyWith(color: ZipColors.textSecondary),
-                        ),
-                      if (progress != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4, right: 8),
+                    if (progress != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 5, right: 8),
+                        child: ClipRRect(
+                          borderRadius: ZipRadius.pillAll,
                           child: LinearProgressIndicator(
                             value: progress,
-                            minHeight: 2,
-                            backgroundColor: ZipColors.background,
+                            minHeight: 3,
+                            backgroundColor: ZipColors.line,
                             color: ZipColors.accent,
                           ),
                         ),
+                      ),
+                  ],
+                ),
+              ),
+              if (viewers != null && viewers > 0)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, right: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.visibility_outlined, size: 13, color: ZipColors.textMuted),
+                      const SizedBox(width: 3),
+                      Text('$viewers', style: ZipText.mono(fontSize: 12)),
                     ],
                   ),
                 ),
-                if (viewers != null && viewers > 0)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: Text(
-                      '$viewers',
-                      style: text.bodySmall?.copyWith(color: ZipColors.textMuted),
-                    ),
-                  ),
-                Tooltip(
-                  message: state,
-                  child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(color: _stateColor(state), shape: BoxShape.circle),
-                  ),
+              Tooltip(
+                message: state,
+                child: Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(color: _stateColor(state), shape: BoxShape.circle),
                 ),
-                SizedBox(
-                  width: 36,
-                  child: favorite || _hover
-                      ? IconButton(
-                          tooltip: favorite ? 'Remove from favorites' : 'Add to favorites',
-                          iconSize: 18,
-                          visualDensity: VisualDensity.compact,
-                          onPressed: _toggleFavorite,
-                          icon: Icon(
-                            favorite ? Icons.star : Icons.star_border,
-                            color: favorite ? ZipColors.retrying : ZipColors.textMuted,
-                          ),
-                        )
-                      : null,
-                ),
-              ],
-            ),
+              ),
+              SizedBox(
+                width: 38,
+                child: favorite || _hover
+                    ? IconButton(
+                        tooltip: favorite ? 'Remove from favorites' : 'Add to favorites',
+                        iconSize: 18,
+                        visualDensity: VisualDensity.compact,
+                        onPressed: _toggleFavorite,
+                        icon: Icon(
+                          favorite ? Icons.star_rounded : Icons.star_outline_rounded,
+                          color: favorite ? ZipColors.accentText : ZipColors.textMuted,
+                        ),
+                      )
+                    : null,
+              ),
+            ],
           ),
         ),
       ),

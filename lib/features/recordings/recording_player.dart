@@ -10,6 +10,7 @@ import '../../core/stores/settings_store.dart';
 import '../../dvr/dvr_service.dart';
 import '../../dvr/models.dart';
 import '../../player/mpv_player.dart';
+import '../../theme.dart';
 
 String formatPosition(Duration d) {
   String two(int n) => n.toString().padLeft(2, '0');
@@ -188,26 +189,34 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
               children: [
                 Video(controller: _mpv.controller, controls: NoVideoControls, fill: Colors.black),
                 if (_error != null)
-                  Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(_error!, textAlign: TextAlign.center),
+                  ColoredBox(
+                    color: ZipColors.overlayPlayer,
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          _error!,
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
                     ),
                   ),
                 AnimatedOpacity(
                   opacity: showControls ? 1 : 0,
-                  duration: const Duration(milliseconds: 150),
+                  duration: ZipMotion.fast,
                   child: IgnorePointer(
                     ignoring: !showControls,
                     child: Column(
                       children: [
                         Container(
-                          padding: const EdgeInsets.fromLTRB(8, 8, 16, 24),
+                          padding: const EdgeInsets.fromLTRB(8, 8, 16, 32),
                           decoration: const BoxDecoration(
                             gradient: LinearGradient(
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
-                              colors: [Color(0xCC000000), Colors.transparent],
+                              colors: [Color(0xD9000000), Color(0x66000000), Colors.transparent],
+                              stops: [0, 0.5, 1],
                             ),
                           ),
                           child: Row(
@@ -219,8 +228,20 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
                               ),
                               const SizedBox(width: 4),
                               Expanded(
-                                child: Text(
-                                  '${r.title}  ·  ${r.streamName}',
+                                child: Text.rich(
+                                  TextSpan(
+                                    text: r.title,
+                                    children: [
+                                      TextSpan(
+                                        text: '   ${r.streamName}',
+                                        style: const TextStyle(
+                                          color: ZipColors.textSecondary,
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: Theme.of(context).textTheme.titleMedium,
@@ -231,12 +252,14 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
                         ),
                         const Spacer(),
                         Container(
-                          padding: const EdgeInsets.fromLTRB(12, 24, 12, 8),
+                          padding: const EdgeInsets.fromLTRB(12, 40, 12, 8),
                           decoration: const BoxDecoration(
+                            // The web player's scrim: .85 black at the bottom, .4 halfway.
                             gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [Colors.transparent, Color(0xE6000000)],
+                              begin: Alignment.bottomCenter,
+                              end: Alignment.topCenter,
+                              colors: [Color(0xD9000000), Color(0x66000000), Colors.transparent],
+                              stops: [0, 0.5, 1],
                             ),
                           ),
                           child: Row(
@@ -248,9 +271,15 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
                               ),
                               IconButton(
                                 tooltip: _playing ? 'Pause (Space)' : 'Play (Space)',
-                                iconSize: 32,
+                                iconSize: 28,
+                                style: IconButton.styleFrom(
+                                  backgroundColor: ZipColors.accent,
+                                  foregroundColor: ZipColors.onAccent,
+                                  hoverColor: ZipColors.accentHi,
+                                  fixedSize: const Size(48, 48),
+                                ),
                                 onPressed: _player.playOrPause,
-                                icon: Icon(_playing ? Icons.pause : Icons.play_arrow),
+                                icon: Icon(_playing ? Icons.pause_rounded : Icons.play_arrow_rounded),
                               ),
                               IconButton(
                                 tooltip: 'Forward 30 seconds (Right)',
@@ -258,7 +287,10 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
                                 icon: const Icon(Icons.forward_30),
                               ),
                               const SizedBox(width: 8),
-                              Text(formatPosition(Duration(milliseconds: value.round()))),
+                              Text(
+                                formatPosition(Duration(milliseconds: value.round())),
+                                style: ZipText.mono(fontSize: 13, color: ZipColors.text),
+                              ),
                               Expanded(
                                 child: Slider(
                                   value: value,
@@ -280,7 +312,10 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
                                   },
                                 ),
                               ),
-                              Text(_duration == Duration.zero ? '--:--' : formatPosition(_duration)),
+                              Text(
+                                _duration == Duration.zero ? '--:--' : formatPosition(_duration),
+                                style: ZipText.mono(fontSize: 13),
+                              ),
                               const SizedBox(width: 8),
                               IconButton(
                                 tooltip: widget.fullscreen ? 'Exit full screen (Esc)' : 'Full screen (F)',

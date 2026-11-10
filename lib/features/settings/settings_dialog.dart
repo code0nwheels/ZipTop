@@ -210,7 +210,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               const Divider(height: 24),
               ListTile(
-                leading: const Icon(Icons.logout, color: ZipColors.offline),
+                leading: const Icon(Icons.logout, color: ZipColors.danger),
                 title: const Text('Sign out'),
                 subtitle: const Text('Unlink this computer; you will need to pair again'),
                 onTap: widget.onSignOut,
@@ -241,14 +241,8 @@ class _Section extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
-      child: Text(
-        title.toUpperCase(),
-        style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: ZipColors.accent,
-              letterSpacing: 1.1,
-            ),
-      ),
+      padding: const EdgeInsets.fromLTRB(24, 18, 24, 6),
+      child: Text(title, style: ZipText.label),
     );
   }
 }

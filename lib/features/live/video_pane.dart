@@ -9,6 +9,8 @@ import '../../core/session/playback_session.dart';
 import '../../core/stores/guide_repository.dart';
 import '../../dvr/dvr_service.dart';
 import '../../theme.dart';
+import '../../ui/ch_num_chip.dart';
+import '../../ui/zip_spinner.dart';
 import 'channel_panel.dart' show nowPlayingProgress;
 import '../recordings/record_actions.dart';
 import 'live_controller.dart';
@@ -54,7 +56,7 @@ class _VideoPaneState extends State<VideoPane> {
       notice = _Notice(message: live.failure!, action: 'Retry', onAction: live.retryNow);
     } else {
       notice = switch (session.phase) {
-        SessionPhase.preparing => const Center(child: CircularProgressIndicator()),
+        SessionPhase.preparing => const Center(child: ZipSpinner(size: 52)),
         SessionPhase.failed => _Notice(
             message: session.message ?? 'Could not start this channel.',
             action: 'Retry',
@@ -106,10 +108,10 @@ class _VideoPaneState extends State<VideoPane> {
                   stream: live.player.player.stream.buffering,
                   initialData: live.player.player.state.buffering,
                   builder: (context, snapshot) => snapshot.data == true
-                      ? const Center(child: CircularProgressIndicator())
+                      ? const Center(child: ZipSpinner(size: 44))
                       : const SizedBox.shrink(),
                 ),
-              if (notice != null) ColoredBox(color: Colors.black54, child: notice),
+              if (notice != null) ColoredBox(color: ZipColors.overlayPlayer, child: notice),
               if (live.numberEntry.isNotEmpty)
                 Positioned(
                   top: 20,
@@ -127,7 +129,7 @@ class _VideoPaneState extends State<VideoPane> {
                   ignoring: !showControls,
                   child: AnimatedOpacity(
                     opacity: showControls ? 1 : 0,
-                    duration: const Duration(milliseconds: 150),
+                    duration: ZipMotion.fast,
                     child: _ControlBar(
                       live: live,
                       dvr: widget.dvr,
@@ -140,10 +142,15 @@ class _VideoPaneState extends State<VideoPane> {
               ),
               if (warning != null)
                 Center(
-                  child: Card(
-                    color: ZipColors.surface,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: ZipColors.surface,
+                      borderRadius: ZipRadius.lgAll,
+                      border: Border.all(color: ZipColors.lineHi),
+                      boxShadow: ZipShadow.lg,
+                    ),
                     child: Padding(
-                      padding: const EdgeInsets.all(24),
+                      padding: const EdgeInsets.fromLTRB(28, 24, 28, 22),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -152,7 +159,22 @@ class _VideoPaneState extends State<VideoPane> {
                             style: Theme.of(context).textTheme.titleLarge,
                           ),
                           const SizedBox(height: 8),
-                          Text('Playback stops in $warning s'),
+                          Text.rich(
+                            TextSpan(
+                              text: 'Playback stops in ',
+                              style: const TextStyle(color: ZipColors.textSecondary),
+                              children: [
+                                TextSpan(
+                                  text: '$warning s',
+                                  style: ZipText.mono(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: ZipColors.text,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                           const SizedBox(height: 16),
                           FilledButton(
                             onPressed: session.extendWatch,
@@ -197,12 +219,14 @@ class _ControlBar extends StatelessWidget {
     final favorite = channel != null && catalog.isFavorite(channel.id);
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 28, 12, 10),
+      padding: const EdgeInsets.fromLTRB(16, 40, 12, 10),
       decoration: const BoxDecoration(
+        // The web player's scrim: .85 black at the bottom, .4 halfway.
         gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Colors.transparent, Color(0xE6000000)],
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [Color(0xD9000000), Color(0x66000000), Colors.transparent],
+          stops: [0, 0.5, 1],
         ),
       ),
       child: Row(
@@ -231,15 +255,26 @@ class _ControlBar extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        [
-                          if (channel.number != null) '${channel.number}',
-                          channel.name,
-                        ].join('  ·  '),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: text.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                      Row(
+                        children: [
+                          if (channel.number != null) ...[
+                            ChNumChip(channel.number!),
+                            const SizedBox(width: 8),
+                          ],
+                          Flexible(
+                            child: Text(
+                              channel.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: text.titleMedium?.copyWith(
+                                fontSize: 17,
+                                letterSpacing: -0.17,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
+                      const SizedBox(height: 2),
                       if (now?.title != null && now!.title!.isNotEmpty)
                         Text(
                           now.title!,
@@ -252,11 +287,14 @@ class _ControlBar extends StatelessWidget {
                           padding: const EdgeInsets.only(top: 6, bottom: 6),
                           child: ConstrainedBox(
                             constraints: const BoxConstraints(maxWidth: 420),
-                            child: LinearProgressIndicator(
-                              value: progress,
-                              minHeight: 3,
-                              backgroundColor: Colors.white24,
-                              color: ZipColors.accent,
+                            child: ClipRRect(
+                              borderRadius: ZipRadius.pillAll,
+                              child: LinearProgressIndicator(
+                                value: progress,
+                                minHeight: 3,
+                                backgroundColor: ZipColors.lineHi,
+                                color: ZipColors.accent,
+                              ),
                             ),
                           ),
                         )
@@ -270,8 +308,8 @@ class _ControlBar extends StatelessWidget {
               tooltip: favorite ? 'Remove from favorites' : 'Add to favorites',
               onPressed: () => _toggleFavorite(context, channel),
               icon: Icon(
-                favorite ? Icons.star : Icons.star_border,
-                color: favorite ? ZipColors.retrying : null,
+                favorite ? Icons.star_rounded : Icons.star_outline_rounded,
+                color: favorite ? ZipColors.accentText : null,
               ),
             ),
           if (channel != null) RecordButton(dvr: dvr, guide: guide, channel: channel),
@@ -417,7 +455,6 @@ class _TrackMenu<T> extends StatelessWidget {
       tooltip: tooltip,
       icon: Icon(icon),
       enabled: tracks.isNotEmpty,
-      color: ZipColors.surface,
       onSelected: onSelected,
       itemBuilder: (context) => [
         for (final track in tracks)
@@ -439,20 +476,21 @@ class _NumberPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return AnimatedContainer(
+      duration: ZipMotion.fast,
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
       decoration: BoxDecoration(
-        color: invalid ? ZipColors.offline : const Color(0xCC000000),
-        borderRadius: BorderRadius.circular(24),
+        color: invalid ? ZipColors.danger : ZipColors.overlayPill,
+        borderRadius: ZipRadius.pillAll,
+        border: Border.all(color: invalid ? ZipColors.danger : ZipColors.lineHi),
       ),
       child: Text(
         digits,
-        style: const TextStyle(
-          color: Colors.white,
+        style: ZipText.mono(
           fontSize: 28,
           fontWeight: FontWeight.w700,
-          letterSpacing: 3,
-        ),
+          color: invalid ? ZipColors.page : ZipColors.text,
+        ).copyWith(letterSpacing: 3),
       ),
     );
   }
