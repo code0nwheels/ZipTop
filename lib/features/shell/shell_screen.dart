@@ -9,6 +9,7 @@ import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../core/models/catalog.dart';
+import '../../core/platform/tray.dart';
 import '../../core/session/playback_session.dart';
 import '../../core/stores/catalog_store.dart';
 import '../../core/stores/guide_repository.dart';
@@ -69,6 +70,12 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   bool _booting = true;
   bool _closing = false;
   bool _inTray = false;
+
+  /// Minimized in place of hiding, on a Linux desktop with no tray to hide in.
+  bool _minimizedNoTray = false;
+
+  /// Out of sight with live playback stopped, in the tray or minimized.
+  bool get _hiddenAway => _inTray || _minimizedNoTray;
   bool _startedHidden = false;
   Timer? _bootRetry;
   bool _liveSuspended = false;
@@ -117,18 +124,18 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       _bootError = null;
     });
     // Recordings do not need the channel list, so the recorder starts first:
-    // at Windows sign-in the network may not be up yet.
+    // at sign-in the network may not be up yet.
     _dvr.start();
     final startHidden = ref.read(startHiddenProvider) && !_startedHidden;
     if (startHidden) {
-      // Started with Windows: go straight to the notification area.
+      // Started at sign-in: go straight to the notification area.
       _startedHidden = true;
       await _hideToTray();
     }
     _bootRetry?.cancel();
     try {
-      await _live.boot(autoplay: !_inTray);
-      if (!_inTray) unawaited(_autoCheckForUpdate());
+      await _live.boot(autoplay: !_hiddenAway);
+      if (!_hiddenAway) unawaited(_autoCheckForUpdate());
       // Open on Favorites when the viewer has some, like the Android guide.
       final favorites = _catalog.category(CategoryIds.favorites);
       if (_categoryId == null && favorites != null && !favorites.hidden) {
@@ -137,7 +144,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     } catch (e) {
       _bootError = "Couldn't load channels. $e";
       // Nobody is looking at the Retry button while hidden; keep trying.
-      if (_inTray && mounted) _bootRetry = Timer(const Duration(seconds: 30), _boot);
+      if (_hiddenAway && mounted) _bootRetry = Timer(const Duration(seconds: 30), _boot);
     }
     if (mounted) setState(() => _booting = false);
     // Debug builds only: open straight into a view, for testing from scripts.
@@ -228,10 +235,24 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   /// Hides the window and stops what was being watched; recordings carry on.
   Future<void> _hideToTray() async {
     if (_fullscreen) await _setFullscreen(false);
+    if (!await hasTrayHost()) {
+      // No tray on this Linux desktop: an icon would be invisible, so
+      // minimize instead and stay reachable from the taskbar or dock.
+      // Started at sign-in, the window has never been shown: iconify first
+      // so it maps straight onto the taskbar, then make sure it is mapped.
+      await windowManager.minimize();
+      if (!await windowManager.isVisible()) {
+        await windowManager.show();
+        await windowManager.minimize();
+      }
+      _minimizedNoTray = true;
+      await _leaveForBackground();
+      return;
+    }
     await windowManager.hide();
     _inTray = true;
     try {
-      await trayManager.setIcon('assets/app_icon.ico');
+      await trayManager.setIcon(trayIconAsset);
       await trayManager.setToolTip('ZipTop');
       await trayManager.setContextMenu(
         Menu(
@@ -248,6 +269,11 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       await windowManager.show();
       return;
     }
+    await _leaveForBackground();
+  }
+
+  /// Stops what was being watched once the window is out of sight.
+  Future<void> _leaveForBackground() async {
     if (!mounted) return;
     final wasMultiview = _view == _View.multiview;
     setState(() {
@@ -266,11 +292,25 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     } catch (_) {}
     await windowManager.show();
     await windowManager.focus();
+    await _resumeFromBackground();
+  }
+
+  Future<void> _resumeFromBackground() async {
     if (mounted && _liveSuspended && _view == _View.live) {
       _liveSuspended = false;
       await _live.resume();
     }
   }
+
+  /// Brought back from the taskbar after minimizing in place of the tray.
+  void _restoreFromMinimized() {
+    if (!_minimizedNoTray) return;
+    _minimizedNoTray = false;
+    unawaited(_resumeFromBackground());
+  }
+
+  @override
+  void onWindowRestore() => _restoreFromMinimized();
 
   @override
   void onTrayIconMouseDown() => unawaited(_restoreFromTray());
@@ -499,7 +539,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   Future<void> _autoCheckForUpdate() async {
     final service = ref.read(updateServiceProvider);
     final update = await service.autoCheck();
-    if (update != null && mounted && !_inTray) await _offerUpdate(update);
+    if (update != null && mounted && !_hiddenAway) await _offerUpdate(update);
   }
 
   Future<void> _offerUpdate(UpdateInfo update) async {

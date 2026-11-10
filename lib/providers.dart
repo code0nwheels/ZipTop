@@ -54,14 +54,14 @@ final guideRepositoryProvider = Provider<GuideRepository>((ref) {
   return repository;
 });
 
-/// True when ZipTop was started with `--minimized` (start with Windows).
+/// True when ZipTop was started with `--minimized` (start at sign-in).
 final startHiddenProvider = Provider<bool>((ref) => false);
 
 /// This build's version, read before the app starts.
 final appVersionProvider = Provider<String>((ref) => '0.0.0');
 
-final startupRegistrationProvider =
-    Provider<StartupRegistration>((ref) => StartupRegistration());
+/// Start-at-sign-in: the Run key on Windows, an XDG autostart entry on Linux.
+final startupRegistrationProvider = Provider<Autostart>((ref) => Autostart());
 
 final updateServiceProvider = Provider<UpdateService>(
   (ref) => UpdateService(

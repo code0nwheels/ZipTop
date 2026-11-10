@@ -1,0 +1,6 @@
+#!/bin/sh
+# Entry point of the ZipTop AppImage. The Flutter bundle sits at the root of
+# the AppDir (ziptop, lib/, data/), exactly as `flutter build linux` lays it
+# out, so the app finds its data and libraries next to itself.
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/ziptop" "$@"

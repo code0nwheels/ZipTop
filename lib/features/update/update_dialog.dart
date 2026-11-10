@@ -6,8 +6,8 @@ import 'package:flutter/material.dart';
 import '../../theme.dart';
 import 'update_service.dart';
 
-/// Offers an update, downloads it with progress, then asks [onInstall] to
-/// close the app so the installer can replace it.
+/// Offers an update, downloads it with progress, hands over to it, then asks
+/// [onInstall] to close the app so the update can take its place.
 class UpdateDialog extends StatefulWidget {
   const UpdateDialog({
     super.key,
@@ -19,7 +19,7 @@ class UpdateDialog extends StatefulWidget {
   final UpdateService service;
   final UpdateInfo update;
 
-  /// Called once the installer has been started.
+  /// Called once the update has been started.
   final Future<void> Function() onInstall;
 
   @override
@@ -39,14 +39,14 @@ class _UpdateDialogState extends State<UpdateDialog> {
       _error = null;
     });
     try {
-      final installer = await widget.service.download(
+      final file = await widget.service.download(
         widget.update,
         cancel: _cancel,
         onProgress: (fraction) {
           if (mounted) setState(() => _progress = fraction);
         },
       );
-      await widget.service.launchInstaller(installer);
+      await widget.service.install(file);
       await widget.onInstall();
     } on DioException catch (e) {
       if (CancelToken.isCancel(e) || !mounted) return;
