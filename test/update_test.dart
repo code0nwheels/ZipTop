@@ -90,7 +90,13 @@ void main() {
         currentVersion: '1.2.0',
         http: Dio()..httpClientAdapter = adapter,
         clock: () => now,
+        platform: UpdatePlatform.windows,
       );
+    });
+
+    test('Windows ignores a release that only has the AppImage', () async {
+      adapter.body = release('v1.3.0', assets: ['ZipTop-{v}-x86_64.AppImage']);
+      expect(await service.check(), isNull);
     });
 
     test('offers a newer GitHub release and its installer', () async {
@@ -152,6 +158,89 @@ void main() {
       adapter.body = release('v1.4.0');
       now = now.add(const Duration(hours: 7));
       expect((await service.autoCheck())!.version, '1.4.0');
+    });
+  });
+
+  group('UpdateService on Linux', () {
+    late OneAnswer adapter;
+    late SettingsStore settings;
+    late Directory dir;
+    late String appImage;
+    late List<String> launched;
+    late Future<void> Function(String) originalLauncher;
+
+    UpdateService linux(Map<String, String> environment) => UpdateService(
+          settings: settings,
+          currentVersion: '1.2.0',
+          http: Dio()..httpClientAdapter = adapter,
+          platform: UpdatePlatform.linux,
+          environment: environment,
+        );
+
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({});
+      settings = await SettingsStore.load();
+      adapter = OneAnswer(
+        200,
+        release('v1.3.0', assets: ['ZipTop-Setup-{v}.exe', 'ZipTop-{v}-x86_64.AppImage']),
+      );
+      dir = await Directory.systemTemp.createTemp('ziptop_update_test');
+      appImage = '${dir.path}${Platform.pathSeparator}ZipTop.AppImage';
+      await File(appImage).writeAsString('old');
+      launched = [];
+      originalLauncher = UpdateService.launcher;
+      UpdateService.launcher = (path) async => launched.add(path);
+    });
+
+    tearDown(() async {
+      UpdateService.launcher = originalLauncher;
+      await dir.delete(recursive: true);
+    });
+
+    test('picks the AppImage and ignores the installer', () async {
+      final update = await linux({'APPIMAGE': appImage}).check();
+      expect(
+        update!.downloadUrl,
+        'https://github.com/code0nwheels/ZipTop/releases/download/v1.3.0/ZipTop-1.3.0-x86_64.AppImage',
+      );
+    });
+
+    test('nothing to offer when not run as an AppImage, or when its folder is missing', () async {
+      expect(await linux({}).check(), isNull);
+      expect(await linux({'APPIMAGE': ''}).check(), isNull);
+      final gone = '${dir.path}${Platform.pathSeparator}gone${Platform.pathSeparator}ZipTop.AppImage';
+      expect(await linux({'APPIMAGE': gone}).check(), isNull);
+      expect(adapter.requests, isEmpty);
+      expect(dir.listSync(), hasLength(1), reason: 'the write probe is cleaned up');
+    });
+
+    test('nothing to offer when the release has only the installer', () async {
+      adapter.body = release('v1.3.0');
+      expect(await linux({'APPIMAGE': appImage}).check(), isNull);
+    });
+
+    test('downloads next to the running AppImage', () async {
+      final service = linux({'APPIMAGE': appImage});
+      final file = await service.download((await service.check())!);
+      expect(file.path, '$appImage.new');
+      expect(await file.exists(), isTrue);
+      expect(await File('$appImage.new.download').exists(), isFalse);
+      expect(await File(appImage).readAsString(), 'old');
+    });
+
+    test('install swaps the new AppImage in and starts it', () async {
+      final downloaded = File('$appImage.new');
+      await downloaded.writeAsString('new');
+
+      await linux({'APPIMAGE': appImage}).install(downloaded);
+
+      expect(await File(appImage).readAsString(), 'new');
+      expect(await downloaded.exists(), isFalse);
+      expect(launched, [appImage]);
+      if (!Platform.isWindows) {
+        // The owner's execute bit (the rest depend on the umask).
+        expect(File(appImage).statSync().mode & 0x40, 0x40);
+      }
     });
   });
 
