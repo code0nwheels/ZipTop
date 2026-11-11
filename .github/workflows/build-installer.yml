@@ -46,7 +46,7 @@ env:
 jobs:
   version:
     name: Work out the version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
       build_number: ${{ steps.version.outputs.build_number }}
@@ -403,7 +403,7 @@ jobs:
     name: Publish release
     needs: [version, windows, linux, macos]
     if: needs.version.outputs.release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Download builds
         uses: actions/download-artifact@v8
