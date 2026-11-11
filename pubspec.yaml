@@ -54,6 +54,9 @@ dependencies:
   file_selector: ^1.1.0
   tray_manager: ">=0.2.0 <0.6.0"
   path: ^1.9.1
+  multicast_dns: ^0.3.3+1
+  ziptop_avplayer:
+    path: packages/ziptop_avplayer
 
 dev_dependencies:
   flutter_test:

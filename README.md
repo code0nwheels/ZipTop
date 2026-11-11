@@ -1,7 +1,10 @@
 # ZipTop
 
 The ZipStreams desktop client for Windows, Linux and macOS: live TV, TV
-guide, multiview and DVR. Built with Flutter, playing through mpv (libmpv via media_kit).
+guide, multiview and DVR. Built with Flutter. Live TV plays through mpv
+(libmpv via media_kit) on Windows and Linux and through AVPlayer on macOS, so
+it can go to an Apple TV over AirPlay. Recordings play through mpv everywhere.
+Any of them can cast the channel to a Chromecast or Google TV.
 
 It is the desktop counterpart of the Android TV app and talks to the same
 backend with the same device-code pairing.
@@ -67,6 +70,11 @@ macos/third_party/build_libmpv.sh
 flutter pub get
 flutter run -d macos
 ```
+
+Live TV and multiview play through AVPlayer, in the local plugin
+`packages/ziptop_avplayer` (Swift, drawn into a Flutter texture), which also
+shows the AirPlay menu. AVPlayer can't open the MPEG-TS files recordings are
+saved as, so recordings still play through mpv, hence libmpv below.
 
 `build_libmpv.sh` builds mpv 0.42 with FFmpeg, libplacebo and libass from
 pinned, checksummed sources into `macos/third_party/libmpv/` (several

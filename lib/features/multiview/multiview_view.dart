@@ -1,6 +1,5 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../core/session/playback_session.dart';
 import '../../theme.dart';
@@ -380,12 +379,10 @@ class _TileState extends State<_Tile> {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                Video(
+                KeyedSubtree(
                   // A rebuilt player needs a fresh video surface.
                   key: ObjectKey(tile.player),
-                  controller: tile.player.controller,
-                  controls: NoVideoControls,
-                  fill: Colors.black,
+                  child: tile.player.view(),
                 ),
                 if (busy) const Center(child: ZipSpinner()),
                 if (message != null)

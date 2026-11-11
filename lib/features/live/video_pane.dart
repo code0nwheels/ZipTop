@@ -1,13 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:media_kit/media_kit.dart';
-import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../cast/cast_controller.dart';
 import '../../core/models/catalog.dart';
 import '../../core/session/playback_session.dart';
 import '../../core/stores/guide_repository.dart';
 import '../../dvr/dvr_service.dart';
+import '../../player/live_player.dart';
 import '../../player/mpv_player.dart' show StreamVariant, formatBitrate;
 import '../../theme.dart';
 import '../../ui/ch_num_chip.dart';
@@ -22,6 +22,7 @@ class VideoPane extends StatefulWidget {
   const VideoPane({
     super.key,
     required this.live,
+    required this.cast,
     required this.dvr,
     required this.guide,
     required this.fullscreen,
@@ -33,6 +34,7 @@ class VideoPane extends StatefulWidget {
   });
 
   final LiveController live;
+  final CastController cast;
   final DvrService dvr;
   final GuideRepository guide;
   final bool fullscreen;
@@ -106,15 +108,12 @@ class _VideoPaneState extends State<VideoPane> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              Video(
-                controller: live.player.controller,
-                controls: NoVideoControls,
-                fill: Colors.black,
-              ),
-              if (notice == null)
+              live.player.view(),
+              _ElsewhereCard(live: live, cast: widget.cast, compact: widget.mini),
+              if (notice == null && live.remote == null)
                 StreamBuilder<bool>(
-                  stream: live.player.player.stream.buffering,
-                  initialData: live.player.player.state.buffering,
+                  stream: live.player.buffering,
+                  initialData: live.player.isBuffering,
                   builder: (context, snapshot) => snapshot.data == true
                       ? const Center(child: ZipSpinner(size: 44))
                       : const SizedBox.shrink(),
@@ -140,6 +139,7 @@ class _VideoPaneState extends State<VideoPane> {
                     duration: ZipMotion.fast,
                     child: _ControlBar(
                       live: live,
+                      cast: widget.cast,
                       dvr: widget.dvr,
                       guide: widget.guide,
                       fullscreen: widget.fullscreen,
@@ -206,6 +206,7 @@ class _VideoPaneState extends State<VideoPane> {
 class _ControlBar extends StatelessWidget {
   const _ControlBar({
     required this.live,
+    required this.cast,
     required this.dvr,
     required this.guide,
     required this.fullscreen,
@@ -215,6 +216,7 @@ class _ControlBar extends StatelessWidget {
   });
 
   final LiveController live;
+  final CastController cast;
   final DvrService dvr;
   final GuideRepository guide;
   final bool fullscreen;
@@ -228,7 +230,7 @@ class _ControlBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final channel = live.current;
     final catalog = live.catalog;
-    final player = live.player.player;
+    final player = live.player;
     final text = Theme.of(context).textTheme;
     final now = channel?.nowPlaying;
     final progress = nowPlayingProgress(now);
@@ -331,39 +333,39 @@ class _ControlBar extends StatelessWidget {
               ),
             ),
           if (channel != null && !mini) RecordButton(dvr: dvr, guide: guide, channel: channel),
-          if (!mini)
-            StreamBuilder<Tracks>(
-              stream: player.stream.tracks,
-              initialData: player.state.tracks,
-              builder: (context, snapshot) {
-                final tracks = snapshot.data ?? player.state.tracks;
-                final current = player.state.track;
+          if (!mini && live.remote == null)
+            ValueListenableBuilder<MediaTracks>(
+              valueListenable: player.tracks,
+              builder: (context, tracks, _) {
                 return Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _QualityMenu(live: live),
-                    _TrackMenu<AudioTrack>(
+                    _TrackMenu<MediaTrack>(
                       tooltip: 'Audio',
                       icon: Icons.audiotrack_outlined,
-                      tracks: [for (final t in tracks.audio) if (t.id != 'no') t],
-                      currentId: current.audio.id,
+                      tracks: tracks.audio,
+                      currentId: tracks.audioId,
                       idOf: (t) => t.id,
                       labelOf: (t) => _namedLabel(t.id, t.title, t.language, 'Track'),
-                      onSelected: player.setAudioTrack,
+                      onSelected: player.selectAudio,
                     ),
-                    _TrackMenu<SubtitleTrack>(
+                    _TrackMenu<MediaTrack>(
                       tooltip: 'Captions',
                       icon: Icons.closed_caption_outlined,
-                      tracks: [for (final t in tracks.subtitle) if (t.id != 'auto') t],
-                      currentId: current.subtitle.id,
+                      tracks: tracks.captions,
+                      currentId: tracks.captionId,
                       idOf: (t) => t.id,
                       labelOf: (t) => _namedLabel(t.id, t.title, t.language, 'Captions'),
-                      onSelected: player.setSubtitleTrack,
+                      onSelected: player.selectCaptions,
                     ),
                   ],
                 );
               },
             ),
+          if (!mini && player.supportsAirPlay && live.remote == null)
+            _AirPlayButton(player: player),
+          if (!mini) _CastButton(cast: cast),
           ListenableBuilder(
             listenable: live.settings,
             builder: (context, _) {
@@ -484,6 +486,221 @@ class _QualityMenu extends StatelessWidget {
                 child: Text(v.label),
               ),
           ],
+        );
+      },
+    );
+  }
+}
+
+/// Opens the system AirPlay menu over itself (macOS).
+class _AirPlayButton extends StatelessWidget {
+  const _AirPlayButton({required this.player});
+
+  final LivePlayer player;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: player.externalPlayback,
+      builder: (context, external, _) => IconButton(
+        tooltip: external ? 'Playing on AirPlay' : 'AirPlay',
+        icon: Icon(Icons.airplay, color: external ? ZipColors.accentText : null),
+        onPressed: () {
+          final box = context.findRenderObject();
+          if (box is! RenderBox || !box.hasSize) return;
+          unawaited(player.showAirPlayPicker(box.localToGlobal(Offset.zero) & box.size));
+        },
+      ),
+    );
+  }
+}
+
+class _CastButton extends StatelessWidget {
+  const _CastButton({required this.cast});
+
+  final CastController cast;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: cast,
+      builder: (context, _) {
+        final name = cast.device?.name ?? 'TV';
+        return IconButton(
+          tooltip: switch (cast.phase) {
+            CastPhase.casting => 'Casting to $name',
+            CastPhase.connecting => 'Connecting to $name…',
+            CastPhase.idle => 'Cast to a TV',
+          },
+          icon: Icon(
+            cast.phase == CastPhase.idle ? Icons.cast : Icons.cast_connected,
+            color: cast.phase == CastPhase.idle ? null : ZipColors.accentText,
+          ),
+          onPressed: () => showDialog<void>(
+            context: context,
+            builder: (_) => _CastDialog(cast: cast),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Lists the Cast devices on the network; picking one casts to it.
+class _CastDialog extends StatefulWidget {
+  const _CastDialog({required this.cast});
+
+  final CastController cast;
+
+  @override
+  State<_CastDialog> createState() => _CastDialogState();
+}
+
+class _CastDialogState extends State<_CastDialog> {
+  @override
+  void initState() {
+    super.initState();
+    if (widget.cast.phase == CastPhase.idle) unawaited(widget.cast.scan());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cast = widget.cast;
+    return ListenableBuilder(
+      listenable: cast,
+      builder: (context, _) {
+        final current = cast.device;
+        final devices = [
+          ...cast.devices,
+          if (current != null && !cast.devices.contains(current)) current,
+        ];
+        return AlertDialog(
+          title: const Text('Cast to a TV'),
+          content: SizedBox(
+            width: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final device in devices)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      device == current ? Icons.cast_connected : Icons.tv,
+                      color: device == current ? ZipColors.accentText : null,
+                    ),
+                    title: Text(device.name),
+                    subtitle: device.model == null ? null : Text(device.model!),
+                    trailing: device == current && cast.phase == CastPhase.connecting
+                        ? const ZipSpinner(size: 20)
+                        : null,
+                    onTap: device == current
+                        ? null
+                        : () {
+                            unawaited(cast.castTo(device));
+                            Navigator.of(context).pop();
+                          },
+                  ),
+                if (cast.scanning)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Row(
+                      children: [
+                        ZipSpinner(size: 20),
+                        SizedBox(width: 12),
+                        Text('Looking for devices…'),
+                      ],
+                    ),
+                  )
+                else if (devices.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      'No Chromecast or Google TV found. It needs to be on the same '
+                      'network as this computer.',
+                      style: TextStyle(color: ZipColors.textSecondary),
+                    ),
+                  ),
+                if (cast.error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(cast.error!, style: const TextStyle(color: ZipColors.danger)),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            if (cast.phase != CastPhase.idle)
+              TextButton(
+                onPressed: () {
+                  unawaited(cast.stop());
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Stop casting'),
+              ),
+            TextButton(
+              onPressed: cast.scanning ? null : cast.scan,
+              child: const Text('Search again'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Over the black video while the picture is on a TV: where it is, and
+/// the way back.
+class _ElsewhereCard extends StatelessWidget {
+  const _ElsewhereCard({required this.live, required this.cast, required this.compact});
+
+  final LiveController live;
+  final CastController cast;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([cast, live.player.externalPlayback]),
+      builder: (context, _) {
+        final String label;
+        final IconData icon;
+        VoidCallback? onStop;
+        if (cast.phase != CastPhase.idle) {
+          final name = cast.device?.name ?? 'TV';
+          label = cast.phase == CastPhase.casting ? 'Casting to $name' : 'Connecting to $name…';
+          icon = Icons.cast_connected;
+          onStop = () => unawaited(cast.stop());
+        } else if (live.player.externalPlayback.value) {
+          label = 'Playing on AirPlay';
+          icon = Icons.airplay;
+        } else {
+          return const SizedBox.shrink();
+        }
+        return ColoredBox(
+          color: Colors.black,
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: compact ? 36 : 64, color: ZipColors.textSecondary),
+                SizedBox(height: compact ? 8 : 16),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                if (onStop != null && !compact) ...[
+                  const SizedBox(height: 16),
+                  OutlinedButton(onPressed: onStop, child: const Text('Stop casting')),
+                ],
+              ],
+            ),
+          ),
         );
       },
     );

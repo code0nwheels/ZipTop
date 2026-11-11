@@ -6,10 +6,58 @@ import '../../core/models/catalog.dart';
 import '../../core/session/playback_session.dart';
 import '../../core/stores/catalog_store.dart';
 import '../../core/stores/settings_store.dart';
-import '../../player/mpv_player.dart';
+import '../../player/live_player.dart';
+import '../../player/mpv_player.dart' show ProgressTracker, RetryPolicy, isReloadableError;
 
-/// Joins the catalogue, the server session and mpv for the main player:
-/// tuning, zapping, number entry, and recovering when playback dies.
+/// What happened to the stream on a [RemoteOutput].
+sealed class RemoteEvent {
+  const RemoteEvent();
+}
+
+/// Playing: the stream is healthy.
+class RemotePlaying extends RemoteEvent {
+  const RemotePlaying();
+}
+
+/// The stream ran out, as live streams sometimes do; it needs a new URL.
+class RemoteEnded extends RemoteEvent {
+  const RemoteEnded();
+}
+
+class RemoteFailed extends RemoteEvent {
+  const RemoteFailed(this.message);
+  final String message;
+}
+
+/// The device went away or was taken over; playback comes back here.
+class RemoteGone extends RemoteEvent {
+  const RemoteGone(this.message);
+  final String message;
+}
+
+/// Somewhere other than this window to send the stream: a Chromecast.
+///
+/// The server session (heartbeats included) keeps running here, so the
+/// device only ever gets the signed URL.
+abstract class RemoteOutput {
+  /// Shown as "Casting to [name]".
+  String get name;
+
+  /// Plays [url], the signed stream for [channel], on the device.
+  Future<void> load(String url, Channel channel);
+
+  /// Stops what the device is playing.
+  Future<void> stopMedia();
+
+  /// 0 to 100.
+  Future<void> setVolume(double volume);
+
+  Stream<RemoteEvent> get events;
+}
+
+/// Joins the catalogue, the server session and the player for the main
+/// video: tuning, zapping, number entry, casting, and recovering when
+/// playback dies.
 class LiveController extends ChangeNotifier {
   LiveController({
     required this.catalog,
@@ -18,13 +66,21 @@ class LiveController extends ChangeNotifier {
     required this.player,
   }) {
     session.addListener(_onSession);
+    // While casting, this window's player is stopped and the device's
+    // events count instead.
     _subs = [
-      player.player.stream.completed.listen((done) {
-        if (done) _onEnded();
+      player.completed.listen((done) {
+        if (done && _remote == null) _onEnded();
       }),
-      player.player.stream.error.listen(_onError),
-      player.player.stream.position.listen(_onPosition),
-      player.player.stream.buffering.listen(_onBuffering),
+      player.errors.listen((message) {
+        if (_remote == null) _onError(message);
+      }),
+      player.position.listen((position) {
+        if (_remote == null) _onPosition(position);
+      }),
+      player.buffering.listen((buffering) {
+        if (_remote == null) _onBuffering(buffering);
+      }),
     ];
   }
 
@@ -39,7 +95,7 @@ class LiveController extends ChangeNotifier {
   final CatalogStore catalog;
   final SettingsStore settings;
   final PlaybackSession session;
-  final MpvPlayer player;
+  final LivePlayer player;
 
   late final List<StreamSubscription<dynamic>> _subs;
   final _retry = RetryPolicy();
@@ -61,8 +117,13 @@ class LiveController extends ChangeNotifier {
   Timer? _stallTimer;
   Timer? _pollTimer;
   bool _disposed = false;
+  RemoteOutput? _remote;
+  StreamSubscription<RemoteEvent>? _remoteSub;
 
   Channel? get current => _current;
+
+  /// The device the stream is cast to, or null when it plays here.
+  RemoteOutput? get remote => _remote;
   Channel? get previous => _previous;
 
   /// Set when retries ran out; cleared by [retryNow] or tuning.
@@ -108,7 +169,7 @@ class LiveController extends ChangeNotifier {
       unawaited(catalog.refreshLiveIfStale());
       unawaited(catalog.refreshIfStale());
     });
-    unawaited(player.player.setVolume(settings.volume));
+    unawaited(player.setVolume(settings.volume));
 
     if (!autoplay) return;
     await _tuneLast();
@@ -204,9 +265,84 @@ class LiveController extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  /// Sets the volume of whatever is playing: this window, or the TV while
+  /// casting.
   Future<void> setVolume(double volume) async {
     settings.volume = volume;
-    await player.player.setVolume(settings.volume);
+    final remote = _remote;
+    if (remote != null) {
+      await remote.setVolume(settings.volume);
+    } else {
+      await player.setVolume(settings.volume);
+    }
+  }
+
+  /// Sends the stream to [remote] instead of this window. The channel keeps
+  /// its server session; the device gets the URL.
+  Future<void> startCasting(RemoteOutput remote) async {
+    if (identical(_remote, remote)) return;
+    await _remoteSub?.cancel();
+    _remote = remote;
+    _remoteSub = remote.events.listen(_onRemote);
+    _cancelRecovery();
+    _retry.reset();
+    unawaited(player.stop());
+    unawaited(player.note('casting to ${remote.name}'));
+    notifyListeners();
+    final url = session.url;
+    if (_current == null) return;
+    if (session.phase == SessionPhase.playing && url != null) {
+      _playingUrl = url;
+      await _start(url);
+    } else if (session.phase != SessionPhase.preparing) {
+      await retryNow();
+    }
+  }
+
+  /// Brings the stream back to this window from the device. With
+  /// [stopDevice] false the device is left alone (it has gone, or someone
+  /// else is using it); with [resumeHere] false nothing restarts here (the
+  /// app is about to stop live playback anyway).
+  Future<void> stopCasting({bool stopDevice = true, bool resumeHere = true}) async {
+    final remote = _remote;
+    if (remote == null) return;
+    _remote = null;
+    await _remoteSub?.cancel();
+    _remoteSub = null;
+    _cancelRecovery();
+    if (stopDevice) unawaited(remote.stopMedia());
+    unawaited(player.note('stopped casting'));
+    unawaited(player.setVolume(settings.volume));
+    if (!_disposed) notifyListeners();
+    // The URL may be close to expiring; a fresh one starts cleanly.
+    if (resumeHere && _current != null && _playingUrl != null) {
+      _playingUrl = null;
+      _retry.reset();
+      await session.reopen();
+    }
+  }
+
+  void _onRemote(RemoteEvent event) {
+    switch (event) {
+      case RemoteGone():
+        unawaited(stopCasting(stopDevice: false));
+      case _ when _playingUrl == null:
+        return;
+      case RemotePlaying():
+        _retry.reset();
+        _errorTimer?.cancel();
+      case RemoteEnded():
+        _recover(_retry.nextAfterEnded(), 'cast: stream ended');
+      case RemoteFailed(:final message):
+        _recover(_retry.nextAfterError(), 'cast: $message');
+    }
+  }
+
+  /// Stops this window's player and anything playing on the device.
+  void _stopOutput() {
+    unawaited(player.stop());
+    final remote = _remote;
+    if (remote != null) unawaited(remote.stopMedia());
   }
 
   Future<void> toggleMute() async {
@@ -257,7 +393,7 @@ class LiveController extends ChangeNotifier {
     _cancelRecovery();
     cancelNumber();
     _playingUrl = null;
-    unawaited(player.stop());
+    _stopOutput();
     await session.close();
   }
 
@@ -268,7 +404,7 @@ class LiveController extends ChangeNotifier {
     _cancelRecovery();
     _pollTimer?.cancel();
     _playingUrl = null;
-    unawaited(player.stop());
+    _stopOutput();
     await session.close();
   }
 
@@ -290,13 +426,24 @@ class LiveController extends ChangeNotifier {
       _cancelRecovery();
       if (_playingUrl != null) {
         _playingUrl = null;
-        unawaited(player.stop());
+        _stopOutput();
       }
     }
     if (!_disposed) notifyListeners();
   }
 
   Future<void> _start(String url) async {
+    final remote = _remote;
+    final channel = _current;
+    if (remote != null && channel != null) {
+      try {
+        await remote.load(url, channel);
+      } catch (e) {
+        if (_disposed || _playingUrl != url || !identical(_remote, remote)) return;
+        _recover(_retry.nextAfterError(), 'cast load failed: $e');
+      }
+      return;
+    }
     final playable = await player.canPlay(url);
     // The viewer may have moved on while the player was getting ready.
     if (_disposed || _playingUrl != url) return;
@@ -343,7 +490,7 @@ class LiveController extends ChangeNotifier {
     _errorTimer?.cancel();
     _errorTimer = Timer(_errorGrace, () {
       // Still loading is the stall timer's business, not an error.
-      if (!_progress.movedSince(mark) && !player.player.state.buffering) {
+      if (!_progress.movedSince(mark) && !player.isBuffering) {
         _recover(_retry.nextAfterError(), 'error with no progress: $message');
       }
     });
@@ -355,7 +502,7 @@ class LiveController extends ChangeNotifier {
     if (wait == null) {
       _failure = "This channel isn't playing right now.";
       _playingUrl = null;
-      unawaited(player.stop());
+      _stopOutput();
       if (!_disposed) notifyListeners();
       return;
     }
@@ -381,6 +528,7 @@ class LiveController extends ChangeNotifier {
     _pollTimer?.cancel();
     _digitsTimer?.cancel();
     session.removeListener(_onSession);
+    unawaited(_remoteSub?.cancel());
     for (final sub in _subs) {
       unawaited(sub.cancel());
     }
