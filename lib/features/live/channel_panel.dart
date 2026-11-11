@@ -488,6 +488,7 @@ class _ChannelRowState extends State<_ChannelRow> {
     final text = Theme.of(context).textTheme;
     final now = channel.nowPlaying;
     final title = now?.title;
+    final hasTitle = title != null && title.isNotEmpty;
     final progress = nowPlayingProgress(now);
     final favorite = catalog.isFavorite(channel.id);
     final state = catalog.stateOf(channel);
@@ -509,15 +510,17 @@ class _ChannelRowState extends State<_ChannelRow> {
               // Each channel keeps its own hue, as on the web viewer's tiles.
               Container(width: 4, color: channelStripe(channel.name)),
               const SizedBox(width: 10),
-              SizedBox(
-                width: 46,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: channel.number == null
-                      ? const SizedBox.shrink()
-                      : ChNumChip(channel.number!),
+              // Only reserve the number column when there's a number to
+              // show; event feeds often have none and need the room for
+              // their long names.
+              if (channel.number != null)
+                SizedBox(
+                  width: 46,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: ChNumChip(channel.number!),
+                  ),
                 ),
-              ),
               Expanded(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -525,7 +528,9 @@ class _ChannelRowState extends State<_ChannelRow> {
                   children: [
                     Text(
                       channel.name,
-                      maxLines: 1,
+                      // With no programme line under it, the name can use
+                      // both lines of the row.
+                      maxLines: hasTitle ? 1 : 2,
                       overflow: TextOverflow.ellipsis,
                       style: text.bodyLarge?.copyWith(
                         height: 1.25,
@@ -533,7 +538,7 @@ class _ChannelRowState extends State<_ChannelRow> {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    if (title != null && title.isNotEmpty)
+                    if (hasTitle)
                       Text(
                         title,
                         maxLines: 1,
