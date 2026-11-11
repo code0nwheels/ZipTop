@@ -1,3 +1,5 @@
+import 'dart:ui' show Rect;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ziptop/core/models/catalog.dart';
@@ -30,6 +32,23 @@ void main() {
       final reloaded = await SettingsStore.load();
       expect(reloaded.panelOpen, isFalse);
       expect(reloaded.categoriesOpen, isFalse);
+    });
+
+    test('mini player bounds are remembered and survive bad values', () async {
+      expect(settings.miniPlayerBounds, isNull);
+      settings.miniPlayerBounds = const Rect.fromLTWH(1400, 780, 480, 270);
+      final reloaded = await SettingsStore.load();
+      expect(reloaded.miniPlayerBounds, const Rect.fromLTWH(1400, 780, 480, 270));
+
+      reloaded.miniPlayerBounds = null;
+      expect(reloaded.miniPlayerBounds, isNull);
+
+      SharedPreferences.setMockInitialValues({'mini_player_bounds': '[1, 2, "x", 4]'});
+      expect((await SettingsStore.load()).miniPlayerBounds, isNull);
+      SharedPreferences.setMockInitialValues({'mini_player_bounds': '[1, 2, 0, 4]'});
+      expect((await SettingsStore.load()).miniPlayerBounds, isNull);
+      SharedPreferences.setMockInitialValues({'mini_player_bounds': 'nope'});
+      expect((await SettingsStore.load()).miniPlayerBounds, isNull);
     });
 
     test('recents are most-recent-first, de-duplicated and capped at 10', () {

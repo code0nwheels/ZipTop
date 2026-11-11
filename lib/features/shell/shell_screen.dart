@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:screen_retriever/screen_retriever.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -33,11 +34,13 @@ import '../recordings/recordings_view.dart';
 import '../settings/settings_dialog.dart';
 import '../update/update_dialog.dart';
 import '../update/update_service.dart';
+import 'mini_player.dart';
 
 /// The signed-in app: a slim navigation rail, the channel panel and the video.
 ///
 /// In full screen only the video shows; moving the mouse brings the controls
-/// back, and the left edge slides the channel panel over the picture.
+/// back, and the left edge slides the channel panel over the picture. Popped
+/// out (P), the window becomes a small frameless player that stays on top.
 class ShellScreen extends ConsumerStatefulWidget {
   const ShellScreen({super.key, required this.onSignedOut});
 
@@ -53,6 +56,9 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   static const _categoriesWidth = 190.0;
   static const _channelsWidth = 350.0;
   static const _controlsLinger = Duration(seconds: 3);
+
+  /// Must match the WindowOptions in main.dart.
+  static const _minimumWindowSize = Size(900, 560);
 
   late final CatalogStore _catalog;
   late final SettingsStore _settings;
@@ -84,9 +90,16 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   bool _liveSuspended = false;
   Recording? _playing;
   bool _playingFromStart = false;
+  GlobalKey _recordingKey = GlobalKey(debugLabel: 'recording-player');
   _View _view = _View.live;
   bool _fullscreen = false;
   bool _maximizedBeforeFullscreen = false;
+
+  /// Popped out into the small always-on-top player.
+  bool _mini = false;
+  bool _switchingMini = false;
+  Rect? _boundsBeforeMini;
+  bool _maximizedBeforeMini = false;
   bool _edgePanel = false;
   bool _controlsVisible = true;
   Timer? _controlsTimer;
@@ -178,6 +191,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   void onWindowClose() async {
     if (_closing) return;
     if (_dvr.hasPendingWork) {
+      // The question needs more room than the mini player has.
+      if (_mini) await _setMini(false);
       final keep = await _askKeepRunning();
       if (keep == null) return;
       if (keep) {
@@ -230,6 +245,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   Future<void> _quit() async {
     if (_closing) return;
     _closing = true;
+    if (_mini) _settings.miniPlayerBounds = await windowManager.getBounds();
     await windowManager.hide();
     try {
       await Future.wait([_live.shutdown(), _multi.closeAll(), _dvr.stopAll()])
@@ -248,6 +264,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
 
   /// Hides the window and stops what was being watched; recordings carry on.
   Future<void> _hideToTray() async {
+    if (_mini) await _setMini(false);
     if (_fullscreen) await _setFullscreen(false);
     if (!await hasTrayHost()) {
       // No tray on this Linux desktop: an icon would be invisible, so
@@ -366,16 +383,13 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   }
 
   Future<void> _setFullscreen(bool value) async {
+    if (value && _mini) await _setMini(false);
     // Windows: window_manager leaves the title bar showing when it goes full
     // screen from a maximized window (it only drops the frame for a normal
     // one). Restore the window first and maximize it again on the way out.
     if (Platform.isWindows && value && !_fullscreen && await windowManager.isMaximized()) {
       _maximizedBeforeFullscreen = true;
-      // unmaximize() only posts the restore; wait until it has happened.
-      await windowManager.unmaximize();
-      for (var i = 0; i < 40 && await windowManager.isMaximized(); i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-      }
+      await _unmaximize();
     }
     await windowManager.setFullScreen(value);
     if (!value && _maximizedBeforeFullscreen) {
@@ -384,6 +398,93 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     }
     _syncFullscreen(value);
     _focus.requestFocus();
+  }
+
+  /// unmaximize() only posts the restore; this waits until it has happened.
+  Future<void> _unmaximize() async {
+    await windowManager.unmaximize();
+    for (var i = 0; i < 40 && await windowManager.isMaximized(); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+  }
+
+  /// Pops the video out into a small frameless window that stays above
+  /// other apps, or puts the full window back the way it was.
+  Future<void> _setMini(bool value) async {
+    if (_mini == value || _switchingMini || !mounted) return;
+    // Multiview has no mini form.
+    if (value && _view == _View.multiview) return;
+    _switchingMini = true;
+    try {
+      if (value) {
+        await _enterMini();
+      } else {
+        await _leaveMini();
+      }
+    } finally {
+      _switchingMini = false;
+    }
+    // A playing recording keeps the keyboard for its own transport keys.
+    if (_playing == null) _focus.requestFocus();
+    _touchControls();
+  }
+
+  Future<void> _enterMini() async {
+    if (_fullscreen) await _setFullscreen(false);
+    // Only the video and a playing recording have a mini form.
+    if (_view == _View.guide || (_view == _View.recordings && _playing == null)) {
+      _showView(_View.live);
+    }
+    _maximizedBeforeMini = await windowManager.isMaximized();
+    if (_maximizedBeforeMini) await _unmaximize();
+    final bounds = await windowManager.getBounds();
+    _boundsBeforeMini = bounds;
+    final mini = placeMiniPlayer(
+      saved: _settings.miniPlayerBounds,
+      workAreas: await _workAreas(),
+      window: bounds,
+    );
+    // Show only the player before the window shrinks around it.
+    if (mounted) {
+      setState(() {
+        _mini = true;
+        _edgePanel = false;
+      });
+    }
+    await windowManager.setTitleBarStyle(TitleBarStyle.hidden, windowButtonVisibility: false);
+    await windowManager.setMinimumSize(miniPlayerMinimumSize);
+    await windowManager.setAspectRatio(16 / 9);
+    await windowManager.setBounds(mini);
+    await windowManager.setAlwaysOnTop(true);
+  }
+
+  Future<void> _leaveMini() async {
+    _settings.miniPlayerBounds = await windowManager.getBounds();
+    await windowManager.setAlwaysOnTop(false);
+    // Anything at or below zero turns the aspect ratio off. Linux only does
+    // that below zero; zero there would keep a 0:1 ratio hint.
+    await windowManager.setAspectRatio(-1);
+    await windowManager.setTitleBarStyle(TitleBarStyle.normal);
+    await windowManager.setMinimumSize(_minimumWindowSize);
+    final before = _boundsBeforeMini;
+    if (before != null) await windowManager.setBounds(before);
+    if (_maximizedBeforeMini) await windowManager.maximize();
+    _boundsBeforeMini = null;
+    _maximizedBeforeMini = false;
+    if (mounted) setState(() => _mini = false);
+  }
+
+  /// Each display's area minus its taskbar or dock, or none if they can't be
+  /// listed.
+  Future<List<Rect>> _workAreas() async {
+    try {
+      return [
+        for (final display in await screenRetriever.getAllDisplays())
+          (display.visiblePosition ?? Offset.zero) & (display.visibleSize ?? display.size),
+      ];
+    } catch (_) {
+      return const [];
+    }
   }
 
   /// Shows the video controls and restarts their hide timer.
@@ -396,6 +497,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   }
 
   Future<void> _signOut() async {
+    if (_mini) await _setMini(false);
     if (_fullscreen) await _setFullscreen(false);
     await _live.shutdown();
     await _multi.closeAll();
@@ -428,6 +530,13 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
 
   void _showView(_View view) {
     if (_view == view) return;
+    // Multiview and the guide have no mini form.
+    if (_mini && (view == _View.multiview || view == _View.guide)) {
+      unawaited(_setMini(false).then((_) {
+        if (mounted && !_mini) _showView(view);
+      }));
+      return;
+    }
     final from = _view;
     setState(() {
       _view = view;
@@ -465,11 +574,13 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     setState(() {
       _playing = recording;
       _playingFromStart = fromStart;
+      _recordingKey = GlobalKey(debugLabel: 'recording-player');
     });
     unawaited(_suspendLive());
   }
 
   void _closeRecording() {
+    if (_mini) unawaited(_setMini(false));
     if (_fullscreen) unawaited(_setFullscreen(false));
     setState(() => _playing = null);
     _focus.requestFocus();
@@ -494,15 +605,17 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   }
 
   KeyEventResult _onRecordingsKey(LogicalKeyboardKey key) {
-    if (key == LogicalKeyboardKey.escape) {
+    if (key == LogicalKeyboardKey.keyP && _playing != null) {
+      unawaited(_setMini(!_mini));
+    } else if (key == LogicalKeyboardKey.escape) {
       if (_playing != null) {
         _closeRecording();
       } else {
         _showView(_View.live);
       }
-    } else if (key == LogicalKeyboardKey.keyG && !_fullscreen) {
+    } else if (key == LogicalKeyboardKey.keyG && !_fullscreen && !_mini) {
       _showView(_View.guide);
-    } else if (key == LogicalKeyboardKey.keyV && !_fullscreen) {
+    } else if (key == LogicalKeyboardKey.keyV && !_fullscreen && !_mini) {
       _showView(_View.multiview);
     } else {
       return KeyEventResult.ignored;
@@ -659,6 +772,10 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       return KeyEventResult.ignored;
     }
 
+    if (_mini && key == LogicalKeyboardKey.escape) {
+      unawaited(_setMini(false));
+      return KeyEventResult.handled;
+    }
     if (_view == _View.multiview) return _onMultiviewKey(key);
     if (_view == _View.recordings) return _onRecordingsKey(key);
 
@@ -691,6 +808,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       unawaited(_live.toggleMute());
     } else if (key == LogicalKeyboardKey.keyF || key == LogicalKeyboardKey.f11) {
       unawaited(_setFullscreen(!_fullscreen));
+    } else if (key == LogicalKeyboardKey.keyP) {
+      unawaited(_setMini(!_mini));
     } else if (key == LogicalKeyboardKey.escape) {
       if (_edgePanel) {
         setState(() => _edgePanel = false);
@@ -702,10 +821,10 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
         return KeyEventResult.ignored;
       }
     } else if (key == LogicalKeyboardKey.keyG) {
-      if (_fullscreen) return KeyEventResult.ignored;
+      if (_fullscreen || _mini) return KeyEventResult.ignored;
       _showView(_view == _View.guide ? _View.live : _View.guide);
     } else if (key == LogicalKeyboardKey.keyV) {
-      if (_fullscreen) return KeyEventResult.ignored;
+      if (_fullscreen || _mini) return KeyEventResult.ignored;
       _showView(_View.multiview);
     } else if (key == LogicalKeyboardKey.keyR) {
       _quickRecord();
@@ -768,9 +887,11 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
               dvr: _dvr,
               guide: _guide,
               fullscreen: _fullscreen,
+              mini: _mini,
               controlsVisible: _controlsVisible,
               onActivity: _touchControls,
               onToggleFullscreen: () => _setFullscreen(!_fullscreen),
+              onToggleMini: () => _setMini(!_mini),
             );
             final panel = ChannelPanel(
               live: _live,
@@ -799,18 +920,27 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
             final playing = _playing;
             final recordings = playing != null
                 ? RecordingPlayerView(
-                    key: ValueKey('${playing.id}:$_playingFromStart'),
+                    // A global key keeps playback going when full screen or
+                    // the mini player moves it elsewhere in the tree.
+                    key: _recordingKey,
                     recording: playing,
                     fromStart: _playingFromStart,
                     dvr: _dvr,
                     settings: _settings,
                     config: ref.read(apiConfigProvider),
                     fullscreen: _fullscreen,
+                    mini: _mini,
                     onToggleFullscreen: () => _setFullscreen(!_fullscreen),
+                    onToggleMini: () => _setMini(!_mini),
                     onClose: _closeRecording,
                   )
                 : RecordingsView(dvr: _dvr, onPlay: _playRecording);
 
+            if (_mini) {
+              return MiniPlayerDragArea(
+                child: _view == _View.recordings && playing != null ? recordings : video,
+              );
+            }
             if (_fullscreen && _view == _View.multiview) return multiview;
             if (_fullscreen && _view == _View.recordings) return recordings;
 
