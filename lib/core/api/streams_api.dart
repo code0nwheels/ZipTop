@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import '../models/json.dart';
 import '../models/playback.dart';
 import 'api_client.dart';
@@ -7,9 +9,19 @@ import 'api_client.dart';
 /// Ported from the Android app's `StreamRepository`: the same endpoints and
 /// the same reading of their 403 bodies.
 class StreamsApi {
-  StreamsApi(this._client);
+  StreamsApi(this._client, {bool? preferAppleStream})
+      : _preferAppleStream = preferAppleStream ?? Platform.isMacOS;
 
   final ApiClient _client;
+
+  /// Asks for a channel's `apple_stream` (HLS) instead of its DASH manifest.
+  /// The Mac libmpv build cannot play the backend's DASH.
+  final bool _preferAppleStream;
+
+  /// The backend picks the Apple HLS source for any User-Agent containing
+  /// `AppleCoreMedia` (streaming-platform `api/viewer/playback.py`), and bakes
+  /// that choice into the returned URL, so only this request needs it.
+  static const appleStreamUserAgent = 'ZipTop (Macintosh) AppleCoreMedia';
 
   /// The account's concurrent-stream allowance, as last reported by
   /// [checkLimit]. Null until the server has said.
@@ -61,7 +73,10 @@ class StreamsApi {
 
   /// The signed, short-lived playback URL. Never cache it.
   Future<String> streamUrl(String streamId) async {
-    final res = await _client.get('api/viewer/streams/${_id(streamId)}/url');
+    final res = await _client.get(
+      'api/viewer/streams/${_id(streamId)}/url',
+      headers: {'User-Agent': _preferAppleStream ? appleStreamUserAgent : null},
+    );
     final json = res.json;
     if (res.statusCode == 403 && asBool(json?['stream_limit']) == true) {
       throw StreamLimitException(res.errorMessage ?? 'Stream limit reached');

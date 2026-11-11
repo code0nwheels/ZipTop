@@ -134,7 +134,10 @@ void main() {
   });
 
   group('StreamsApi reads playback responses like the Android client', () {
-    StreamsApi api(Handler handler) => StreamsApi(clientWith(FakeAdapter(handler)));
+    StreamsApi api(Handler handler, {bool preferAppleStream = false}) => StreamsApi(
+          clientWith(FakeAdapter(handler)),
+          preferAppleStream: preferAppleStream,
+        );
 
     test('check-limit refusal', () {
       final streams = api(
@@ -155,6 +158,20 @@ void main() {
         return jsonBody({'success': true, 'stream_url': 'https://cdn/x/index.m3u8'});
       });
       expect(await streams.streamUrl('s1'), 'https://cdn/x/index.m3u8');
+    });
+
+    test('stream url asks for the Apple HLS source only when told to', () async {
+      final agents = <Object?>[];
+      ResponseBody handler(RequestOptions o) {
+        agents.add(o.headers['User-Agent']);
+        return jsonBody({'success': true, 'stream_url': 'https://cdn/x/index.m3u8'});
+      }
+
+      await api(handler, preferAppleStream: true).streamUrl('s1');
+      await api(handler).streamUrl('s1');
+      expect(agents.first, StreamsApi.appleStreamUserAgent);
+      expect(agents.first.toString().toLowerCase(), contains('applecoremedia'));
+      expect(agents.last, isNot(StreamsApi.appleStreamUserAgent));
     });
 
     test('empty stream url is an error', () {
