@@ -261,6 +261,53 @@ jobs:
       - name: Test
         run: flutter test
 
+      # Every build is signed with the same self-signed certificate (made
+      # with tool/make_macos_signing_cert.sh), so the login keychain knows an
+      # update as the ZipTop it already allowed and doesn't ask again for the
+      # pairing token. An ad-hoc signature changes with every build.
+      - name: Load the signing certificate
+        env:
+          CERT_P12: ${{ secrets.MACOS_SIGNING_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
+          RELEASE: ${{ needs.version.outputs.release }}
+        run: |
+          if [ -z "$CERT_P12" ] || [ -z "$CERT_PASSWORD" ]; then
+            if [ "$RELEASE" = 'true' ]; then
+              echo "::error::MACOS_SIGNING_CERT_P12 and MACOS_SIGNING_CERT_PASSWORD are not set. A release signed ad hoc would make every Mac ask for the keychain again; see tool/make_macos_signing_cert.sh." >&2
+              exit 1
+            fi
+            echo "::warning::No signing certificate in this run's secrets; this test build is signed ad hoc."
+            exit 0
+          fi
+          dir="$RUNNER_TEMP/signing"
+          mkdir -p "$dir"
+          printf '%s' "$CERT_P12" | base64 --decode > "$dir/cert.p12"
+          keychain="$dir/ziptop-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$dir/cert.p12" -k "$keychain" -f pkcs12 -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          # Let codesign use the key without a prompt nobody could answer.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
+          # codesign looks identities up through the search list.
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          openssl pkcs12 -in "$dir/cert.p12" -nokeys -passin env:CERT_PASSWORD | openssl x509 > "$dir/cert.pem"
+          sha1="$(openssl x509 -in "$dir/cert.pem" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')"
+          # A self-signed certificate isn't trusted, which signing by its hash
+          # doesn't need; trusting it on this throwaway runner as well keeps
+          # codesign from turning it down.
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+            -k /Library/Keychains/System.keychain "$dir/cert.pem" \
+            || echo "::warning::Couldn't mark the signing certificate as trusted on the runner."
+          rm -f "$dir/cert.p12"
+          echo "Signing certificate $sha1"
+          security find-identity -p codesigning "$keychain"
+          {
+            echo "MACOS_SIGN_IDENTITY=$sha1"
+            echo "MACOS_SIGN_KEYCHAIN=$keychain"
+          } >> "$GITHUB_ENV"
+
       - name: Build release and DMG
         run: >
           ./tool/build_dmg.sh
@@ -347,6 +394,10 @@ jobs:
           path: build/dmg/ZipTop-*-macos-arm64.dmg
           if-no-files-found: error
           retention-days: 30
+
+      - name: Remove the signing keychain
+        if: always() && env.MACOS_SIGN_KEYCHAIN != ''
+        run: security delete-keychain "$MACOS_SIGN_KEYCHAIN" || true
 
   release:
     name: Publish release
