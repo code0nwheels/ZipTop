@@ -111,6 +111,92 @@ List<StreamVariant> variantsFromMasterPlaylist(String text, String url) {
   ]);
 }
 
+/// The variant mpv's `hls-bitrate` would pick: the highest bitrate at or
+/// under [cap], else the lowest there is; the highest when [cap] is null.
+/// Ties go to the first in [bitrates]. Returns an index, or null when empty.
+int? pickVariant(List<int> bitrates, int? cap) {
+  int? best;
+  int? lowest;
+  for (var i = 0; i < bitrates.length; i++) {
+    final rate = bitrates[i];
+    if (lowest == null || rate < bitrates[lowest]) lowest = i;
+    final fits = cap == null || rate <= cap;
+    if (fits && (best == null || rate > bitrates[best])) best = i;
+  }
+  return best ?? lowest;
+}
+
+/// [text], an HLS master playlist fetched from [baseUrl], cut down to the
+/// one variant [pickVariant] chooses for [cap] and the renditions (audio,
+/// subtitles) that variant uses, with every URI made absolute.
+///
+/// FFmpeg's HLS demuxer downloads and probes every variant of a master
+/// before it plays any, about a second each on the backend's ladders. One
+/// variant starts at once. Null when [text] is not a master playlist.
+String? trimMasterPlaylist(String text, String baseUrl, {int? cap}) {
+  if (!M3u8Parser.isMaster(text)) return null;
+  final lines = text.split(RegExp(r'\r?\n'));
+
+  // Each variant: the index of its #EXT-X-STREAM-INF line and its URI line.
+  final variants = <({int tag, int uri, int bitrate})>[];
+  for (var i = 0; i < lines.length; i++) {
+    final line = lines[i].trim();
+    if (!line.startsWith('#EXT-X-STREAM-INF')) continue;
+    var j = i + 1;
+    while (j < lines.length && (lines[j].trim().isEmpty || lines[j].trimLeft().startsWith('#'))) {
+      j++;
+    }
+    if (j >= lines.length) break;
+    final attrs = M3u8Parser.parseAttributes(_afterColon(line));
+    final bitrate = int.tryParse(attrs['BANDWIDTH'] ?? attrs['AVERAGE-BANDWIDTH'] ?? '') ?? 0;
+    variants.add((tag: i, uri: j, bitrate: bitrate));
+    i = j;
+  }
+  final chosen = pickVariant([for (final v in variants) v.bitrate], cap);
+  if (chosen == null) return null;
+  final variant = variants[chosen];
+  final variantAttrs = M3u8Parser.parseAttributes(_afterColon(lines[variant.tag].trim()));
+
+  String absolute(String line) => line.replaceAllMapped(
+        RegExp(r'URI="([^"]*)"'),
+        (m) => 'URI="${M3u8Parser.resolve(baseUrl, m.group(1)!)}"',
+      );
+
+  final out = <String>[];
+  for (var i = 0; i < lines.length; i++) {
+    final line = lines[i].trim();
+    if (line.isEmpty) continue;
+    if (i == variant.tag) {
+      out
+        ..add(line)
+        ..add(M3u8Parser.resolve(baseUrl, lines[variant.uri].trim()));
+      continue;
+    }
+    if (variants.any((v) => v.tag == i || v.uri == i)) continue;
+    // Trick-play variants are never played and would only be probed.
+    if (line.startsWith('#EXT-X-I-FRAME-STREAM-INF')) continue;
+    if (line.startsWith('#EXT-X-MEDIA:')) {
+      final attrs = M3u8Parser.parseAttributes(_afterColon(line));
+      final group = switch (attrs['TYPE']) {
+        'AUDIO' => variantAttrs['AUDIO'],
+        'SUBTITLES' => variantAttrs['SUBTITLES'],
+        'VIDEO' => variantAttrs['VIDEO'],
+        'CLOSED-CAPTIONS' => variantAttrs['CLOSED-CAPTIONS'],
+        _ => null,
+      };
+      if (group == null || attrs['GROUP-ID'] != group) continue;
+    }
+    if (!line.startsWith('#')) continue;
+    out.add(absolute(line));
+  }
+  return '${out.join('\n')}\n';
+}
+
+String _afterColon(String line) {
+  final index = line.indexOf(':');
+  return index < 0 ? '' : line.substring(index + 1);
+}
+
 /// The video tracks in mpv's `track-list` (JSON), as variants. For DASH,
 /// mpv lists every video representation; for HLS only the variant it opened.
 List<StreamVariant> variantsFromTrackList(String json) => _ladder([
@@ -176,6 +262,12 @@ class MpvPlayer {
   // variants of a stream that has since been replaced.
   int _openCount = 0;
   bool _variantsFromTracks = false;
+  int? _bitrateCap;
+
+  // Each player writes its cut-down master playlist to its own file.
+  static int _instances = 0;
+  final int _instance = _instances++;
+  File? _trimmedFile;
 
   /// Whether the loaded libmpv can be given [url]. A DASH manifest must never
   /// reach a libmpv that crashes on it.
@@ -255,11 +347,24 @@ class MpvPlayer {
     // mpv lists only the HLS variant it opened, so the ladder comes from the
     // master playlist. For DASH it lists every representation.
     _variantsFromTracks = isDashUrl(url);
-    if (!_variantsFromTracks) unawaited(_loadMasterVariants(url, open));
-    unawaited(note('open ${isDashUrl(url) ? 'DASH' : 'HLS'} stream'));
+    var source = url;
+    if (!_variantsFromTracks) {
+      final master = await _fetchMaster(url);
+      if (_disposed || open != _openCount) return;
+      if (master != null) {
+        variants.value = variantsFromMasterPlaylist(master.text, master.url);
+        final trimmed = trimMasterPlaylist(master.text, master.url, cap: _bitrateCap);
+        if (trimmed != null) source = await _writeTrimmedMaster(trimmed) ?? url;
+        if (_disposed || open != _openCount) return;
+      }
+    }
+    unawaited(note(
+      'open ${isDashUrl(url) ? 'DASH' : 'HLS'} stream'
+      '${source == url ? '' : ' (one variant, cap ${_bitrateCap ?? 'none'})'}',
+    ));
     await player.open(
       Media(
-        url,
+        source,
         httpHeaders: {
           'User-Agent': ApiConfig.mediaUserAgent,
           'Referer': config.referer,
@@ -282,6 +387,7 @@ class MpvPlayer {
   /// when null. mpv reads this when a stream opens and ignores changes to a
   /// stream that is playing. It covers HLS variants and DASH representations.
   Future<void> setHlsBitrateCap(int? bitsPerSecond) async {
+    _bitrateCap = bitsPerSecond;
     await _ready;
     final native = player.platform;
     if (native is NativePlayer) {
@@ -302,6 +408,11 @@ class MpvPlayer {
     await player.dispose();
     variants.dispose();
     activeBitrate.dispose();
+    try {
+      await _trimmedFile?.delete();
+    } catch (_) {
+      // Already gone, or the temp folder is being cleaned up anyway.
+    }
   }
 
   int _forgetVariants() {
@@ -312,22 +423,46 @@ class MpvPlayer {
     return ++_openCount;
   }
 
-  Future<void> _loadMasterVariants(String url, int open) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+  /// The playlist at [url] and the URL it ended up at after redirects, which
+  /// its relative URIs resolve against. Null when it could not be fetched;
+  /// mpv then opens [url] itself.
+  Future<({String text, String url})?> _fetchMaster(String url) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
     try {
       final request = await client.getUrl(Uri.parse(url));
       request.headers.set(HttpHeaders.userAgentHeader, ApiConfig.mediaUserAgent);
       request.headers.set(HttpHeaders.refererHeader, config.referer);
-      final response = await request.close().timeout(const Duration(seconds: 10));
-      if (response.statusCode != 200) return;
+      final response = await request.close().timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) {
+        await response.drain<void>();
+        return null;
+      }
       final text =
-          await response.transform(utf8.decoder).join().timeout(const Duration(seconds: 10));
-      if (_disposed || open != _openCount) return;
-      variants.value = variantsFromMasterPlaylist(text, url);
+          await response.transform(utf8.decoder).join().timeout(const Duration(seconds: 5));
+      var finalUrl = Uri.parse(url);
+      for (final hop in response.redirects) {
+        finalUrl = finalUrl.resolveUri(hop.location);
+      }
+      return (text: text, url: finalUrl.toString());
     } catch (_) {
-      // Without the ladder there is nothing to pick from; playback is fine.
+      return null;
     } finally {
       client.close(force: true);
+    }
+  }
+
+  /// Writes [playlist] where mpv can open it, or null if it can't be.
+  Future<String?> _writeTrimmedMaster(String playlist) async {
+    try {
+      final file = _trimmedFile ??= File(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}ziptop'
+        '${Platform.pathSeparator}master-$pid-$_instance.m3u8',
+      );
+      await file.parent.create(recursive: true);
+      await file.writeAsString(playlist, flush: true);
+      return file.path;
+    } catch (_) {
+      return null;
     }
   }
 

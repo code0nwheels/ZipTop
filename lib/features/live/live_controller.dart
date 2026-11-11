@@ -51,6 +51,7 @@ class LiveController extends ChangeNotifier {
   String? _playingUrl;
   String? _failure;
   final _progress = ProgressTracker();
+  SessionPhase? _loggedPhase;
   String _digits = '';
   bool _digitsInvalid = false;
   double _unmutedVolume = 100;
@@ -273,6 +274,11 @@ class LiveController extends ChangeNotifier {
 
   void _onSession() {
     final url = session.url;
+    if (session.phase != _loggedPhase) {
+      _loggedPhase = session.phase;
+      final why = session.message;
+      unawaited(player.note('session ${session.phase.name}${why == null ? '' : ': $why'}'));
+    }
     if (session.phase == SessionPhase.playing && url != null) {
       if (url != _playingUrl) {
         _playingUrl = url;
