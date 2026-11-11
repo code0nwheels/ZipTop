@@ -18,7 +18,8 @@ import '../../core/stores/guide_repository.dart';
 import '../../core/stores/settings_store.dart';
 import '../../dvr/dvr_service.dart';
 import '../../dvr/models.dart';
-import '../../player/mpv_player.dart';
+import '../../cast/cast_controller.dart';
+import '../../player/live_player.dart';
 import '../../providers.dart';
 import '../../theme.dart';
 import '../../ui/typing.dart';
@@ -64,8 +65,9 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   late final SettingsStore _settings;
   late final GuideRepository _guide;
   late final PlaybackSession _session;
-  late final MpvPlayer _player;
+  late final LivePlayer _player;
   late final LiveController _live;
+  late final CastController _cast;
   late final MultiviewController _multi;
   late final DvrService _dvr;
   late final UpdateService _updates;
@@ -114,13 +116,14 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     _dvr = ref.read(dvrServiceProvider);
     _updates = ref.read(updateServiceProvider);
     _session = PlaybackSession(ref.read(streamsApiProvider), slots: slots);
-    _player = MpvPlayer(config: ref.read(apiConfigProvider));
+    _player = LivePlayer.create(config: ref.read(apiConfigProvider));
     _live = LiveController(
       catalog: _catalog,
       settings: _settings,
       session: _session,
       player: _player,
     );
+    _cast = CastController(live: _live, config: ref.read(apiConfigProvider));
     _multi = MultiviewController(
       catalog: _catalog,
       settings: _settings,
@@ -248,6 +251,11 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     if (_mini) _settings.miniPlayerBounds = await windowManager.getBounds();
     await windowManager.hide();
     try {
+      await _cast.stop(resumeHere: false).timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // The TV times the receiver out by itself.
+    }
+    try {
       await Future.wait([_live.shutdown(), _multi.closeAll(), _dvr.stopAll()])
           .timeout(const Duration(seconds: 10));
     } catch (_) {
@@ -306,7 +314,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     await _leaveForBackground();
   }
 
-  /// Stops what was being watched once the window is out of sight.
+  /// Stops what was being watched once the window is out of sight. A
+  /// channel cast to a TV keeps playing there.
   Future<void> _leaveForBackground() async {
     if (!mounted) return;
     final wasMultiview = _view == _View.multiview;
@@ -315,7 +324,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       _playing = null;
     });
     if (wasMultiview) await _multi.closeAll();
-    await _suspendLive();
+    if (_live.remote == null) await _suspendLive();
   }
 
   Future<void> _restoreFromTray() async {
@@ -499,6 +508,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   Future<void> _signOut() async {
     if (_mini) await _setMini(false);
     if (_fullscreen) await _setFullscreen(false);
+    await _cast.stop(resumeHere: false);
     await _live.shutdown();
     await _multi.closeAll();
     await _dvr.stopAll();
@@ -554,6 +564,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     if (from == _View.multiview) await _multi.closeAll();
     if (to == _View.multiview) {
       final seed = _live.current;
+      // Multiview plays here, so casting ends with it.
+      await _cast.stop(resumeHere: false);
       await _suspendLive();
       if (!mounted || _view != _View.multiview) return;
       _multi.enter(seed: seed);
@@ -576,7 +588,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       _playingFromStart = fromStart;
       _recordingKey = GlobalKey(debugLabel: 'recording-player');
     });
-    unawaited(_suspendLive());
+    unawaited(_cast.stop(resumeHere: false).whenComplete(_suspendLive));
   }
 
   void _closeRecording() {
@@ -803,7 +815,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     } else if (key == LogicalKeyboardKey.backspace) {
       unawaited(_live.tunePrevious());
     } else if (key == LogicalKeyboardKey.space) {
-      unawaited(_player.player.playOrPause());
+      if (_live.remote == null) unawaited(_player.playOrPause());
     } else if (key == LogicalKeyboardKey.keyM) {
       unawaited(_live.toggleMute());
     } else if (key == LogicalKeyboardKey.keyF || key == LogicalKeyboardKey.f11) {
@@ -850,6 +862,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     _focus.dispose();
     _searchFocus.dispose();
     _search.dispose();
+    _cast.dispose();
     _live.dispose();
     _session.dispose();
     unawaited(_player.dispose());
@@ -884,6 +897,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
 
             final video = VideoPane(
               live: _live,
+              cast: _cast,
               dvr: _dvr,
               guide: _guide,
               fullscreen: _fullscreen,

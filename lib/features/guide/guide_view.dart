@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../core/models/catalog.dart';
 import '../../core/models/guide.dart';
@@ -404,11 +403,7 @@ class _GuideViewState extends State<GuideView> {
                         child: SizedBox(
                           width: 160,
                           height: 90,
-                          child: Video(
-                            controller: live.player.controller,
-                            controls: NoVideoControls,
-                            fill: Colors.black,
-                          ),
+                          child: live.player.view(),
                         ),
                       ),
                     ),

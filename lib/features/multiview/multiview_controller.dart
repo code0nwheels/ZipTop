@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart' hide Category;
-import 'package:media_kit/media_kit.dart';
 
 import '../../core/api/api_config.dart';
 import '../../core/api/streams_api.dart';
@@ -9,17 +8,18 @@ import '../../core/models/catalog.dart';
 import '../../core/session/playback_session.dart';
 import '../../core/stores/catalog_store.dart';
 import '../../core/stores/settings_store.dart';
-import '../../player/mpv_player.dart';
+import '../../player/live_player.dart';
+import '../../player/mpv_player.dart' show PlayerTuning, ProgressTracker, isReloadableError;
 import 'multiview_layout.dart';
 
-/// One screen in multiview: its own server session and its own mpv.
+/// One screen in multiview: its own server session and its own player.
 class MultiTile {
   MultiTile._(this.id, this.channel, this.session, this.player);
 
   final int id;
   Channel channel;
   final PlaybackSession session;
-  MpvPlayer player;
+  LivePlayer player;
 
   bool paused = false;
 
@@ -192,7 +192,7 @@ class MultiviewController extends ChangeNotifier {
 
   void togglePause(MultiTile tile) {
     tile.paused = !tile.paused;
-    unawaited(tile.paused ? tile.player.player.pause() : tile.player.player.play());
+    unawaited(tile.paused ? tile.player.pause() : tile.player.resume());
     _changed();
   }
 
@@ -228,7 +228,7 @@ class MultiviewController extends ChangeNotifier {
       _nextId++,
       channel,
       PlaybackSession(_api, slots: slots),
-      MpvPlayer(config: _config, tuning: PlayerTuning.tile),
+      LivePlayer.create(config: _config, tuning: PlayerTuning.tile),
     );
     tile._sessionListener = () => _onSession(tile);
     tile.session.addListener(tile._sessionListener!);
@@ -245,20 +245,20 @@ class MultiviewController extends ChangeNotifier {
   }
 
   void _subscribe(MultiTile tile) {
-    final player = tile.player.player;
+    final player = tile.player;
     tile._subs = [
-      player.stream.completed.listen((done) {
+      player.completed.listen((done) {
         if (done) _recover(tile);
       }),
-      player.stream.error.listen((message) => _onError(tile, message)),
-      player.stream.position.listen((p) {
+      player.errors.listen((message) => _onError(tile, message)),
+      player.position.listen((p) {
         // Real progress means the stream is healthy again.
         if (tile._progress.update(p)) {
           tile._failures = 0;
           tile._errorTimer?.cancel();
         }
       }),
-      player.stream.buffering.listen((buffering) {
+      player.buffering.listen((buffering) {
         tile._stallTimer?.cancel();
         if (buffering && tile._playingUrl != null) {
           tile._stallTimer = Timer(_stallLimit, () => _recover(tile));
@@ -311,7 +311,7 @@ class MultiviewController extends ChangeNotifier {
     await player.play(url);
     // Opening a stream can put the audio track back to automatic.
     if (_tiles.contains(tile) && tile.player == player) await _setAudio(tile);
-    if (tile.paused) await player.player.pause();
+    if (tile.paused) await player.pause();
   }
 
   void _onError(MultiTile tile, String message) {
@@ -320,7 +320,7 @@ class MultiviewController extends ChangeNotifier {
     tile._errorTimer?.cancel();
     tile._errorTimer = Timer(_errorGrace, () {
       // Still loading is the stall timer's business, not an error.
-      if (!tile._progress.movedSince(mark) && !tile.player.player.state.buffering) {
+      if (!tile._progress.movedSince(mark) && !tile.player.isBuffering) {
         _recover(tile);
       }
     });
@@ -347,7 +347,7 @@ class MultiviewController extends ChangeNotifier {
       unawaited(sub.cancel());
     }
     final old = tile.player;
-    tile.player = MpvPlayer(config: _config, tuning: PlayerTuning.tile);
+    tile.player = LivePlayer.create(config: _config, tuning: PlayerTuning.tile);
     _subscribe(tile);
     unawaited(old.dispose());
     _changed();
@@ -362,12 +362,12 @@ class MultiviewController extends ChangeNotifier {
   /// Only the selected tile decodes and outputs sound; the rest have their
   /// audio track switched off, so they never open the sound device.
   Future<void> _setAudio(MultiTile tile) async {
-    final player = tile.player.player;
+    final player = tile.player;
     if (tile.id == _selectedId) {
       await player.setVolume(settings.volume);
-      await player.setAudioTrack(AudioTrack.auto());
+      await player.setAudioEnabled(true);
     } else {
-      await player.setAudioTrack(AudioTrack.no());
+      await player.setAudioEnabled(false);
     }
   }
 

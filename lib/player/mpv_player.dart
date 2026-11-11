@@ -2,14 +2,15 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../core/api/api_config.dart';
 import '../dvr/capture/m3u8_parser.dart';
+import 'live_player.dart';
 
-/// Buffer and network settings for one mpv instance.
+/// Buffer and network settings for one player instance.
 class PlayerTuning {
   const PlayerTuning({
     required this.bufferBytes,
@@ -228,7 +229,7 @@ Iterable<Map<String, dynamic>> _videoTracks(String json) sync* {
 int? _int(Object? value) => value is num ? value.toInt() : null;
 
 /// One mpv instance configured for ZipStreams' signed live streams.
-class MpvPlayer {
+class MpvPlayer implements LivePlayer {
   MpvPlayer({required this.config, this.tuning = PlayerTuning.main})
       : player = Player(
           configuration: PlayerConfiguration(
@@ -240,6 +241,7 @@ class MpvPlayer {
     controller = VideoController(player);
     _ready = _configure();
     _trackSub = player.stream.tracks.listen((_) => unawaited(_readTracks()));
+    _selectionSub = player.stream.track.listen((_) => _publishTracks());
   }
 
   final ApiConfig config;
@@ -248,15 +250,96 @@ class MpvPlayer {
   late final VideoController controller;
   late final Future<void> _ready;
   late final StreamSubscription<Tracks> _trackSub;
+  late final StreamSubscription<Track> _selectionSub;
   bool _dashSafe = false;
   bool _disposed = false;
 
-  /// The bitrates the open stream offers, highest first. Empty when it has
-  /// just one, or before they are known.
-  final variants = ValueNotifier<List<StreamVariant>>(const []);
+  @override
+  final ValueNotifier<List<StreamVariant>> variants = ValueNotifier(const []);
 
-  /// The bitrate of the variant playing now, when the stream says.
-  final activeBitrate = ValueNotifier<int?>(null);
+  @override
+  final ValueNotifier<int?> activeBitrate = ValueNotifier(null);
+
+  @override
+  final ValueNotifier<MediaTracks> tracks = ValueNotifier(MediaTracks.none);
+
+  @override
+  final ValueNotifier<bool> externalPlayback = ValueNotifier(false);
+
+  @override
+  bool get supportsAirPlay => false;
+
+  @override
+  Stream<bool> get completed => player.stream.completed;
+
+  @override
+  Stream<String> get errors => player.stream.error;
+
+  @override
+  Stream<Duration> get position => player.stream.position;
+
+  @override
+  Stream<bool> get buffering => player.stream.buffering;
+
+  @override
+  bool get isBuffering => player.state.buffering;
+
+  @override
+  Future<void> pause() => player.pause();
+
+  @override
+  Future<void> resume() => player.play();
+
+  @override
+  Future<void> playOrPause() => player.playOrPause();
+
+  @override
+  Future<void> setVolume(double volume) => player.setVolume(volume);
+
+  @override
+  Future<void> setAudioEnabled(bool enabled) =>
+      player.setAudioTrack(enabled ? AudioTrack.auto() : AudioTrack.no());
+
+  @override
+  Future<void> selectAudio(MediaTrack track) async {
+    for (final t in player.state.tracks.audio) {
+      if (t.id == track.id) return player.setAudioTrack(t);
+    }
+  }
+
+  @override
+  Future<void> selectCaptions(MediaTrack track) async {
+    if (track.id == 'no') return player.setSubtitleTrack(SubtitleTrack.no());
+    for (final t in player.state.tracks.subtitle) {
+      if (t.id == track.id) return player.setSubtitleTrack(t);
+    }
+  }
+
+  @override
+  Future<void> showAirPlayPicker(Rect anchor) async {}
+
+  @override
+  Widget view() => Video(controller: controller, controls: NoVideoControls, fill: Colors.black);
+
+  void _publishTracks() {
+    if (_disposed) return;
+    final all = player.state.tracks;
+    final current = player.state.track;
+    MediaTrack of(String id, String? title, String? language) =>
+        MediaTrack(id: id, title: title, language: language);
+    tracks.value = MediaTracks(
+      audio: [
+        for (final t in all.audio)
+          if (t.id != 'no') of(t.id, t.title, t.language),
+      ],
+      captions: [
+        for (final t in all.subtitle)
+          if (t.id != 'auto') of(t.id, t.title, t.language),
+      ],
+      audioId: current.audio.id,
+      captionId: current.subtitle.id,
+    );
+  }
 
   // Bumped by every open, so a slow playlist fetch can't fill in the
   // variants of a stream that has since been replaced.
@@ -271,6 +354,7 @@ class MpvPlayer {
 
   /// Whether the loaded libmpv can be given [url]. A DASH manifest must never
   /// reach a libmpv that crashes on it.
+  @override
   Future<bool> canPlay(String url) async {
     await _ready;
     return _dashSafe || !isDashUrl(url);
@@ -326,6 +410,7 @@ class MpvPlayer {
 
   /// Writes [text] into the diagnostic log, if there is one, so the app's
   /// own decisions (reloads, quality changes) line up with mpv's.
+  @override
   Future<void> note(String text) async {
     if (diagnosticLogPath == null || _disposed) return;
     await _ready;
@@ -339,6 +424,7 @@ class MpvPlayer {
   }
 
   /// Starts playing a signed stream URL (HLS or DASH). Check [canPlay] first.
+  @override
   Future<void> play(String url) async {
     if (!await canPlay(url)) {
       throw UnsupportedError('This libmpv build cannot play DASH streams');
@@ -349,7 +435,7 @@ class MpvPlayer {
     _variantsFromTracks = isDashUrl(url);
     var source = url;
     if (!_variantsFromTracks) {
-      final master = await _fetchMaster(url);
+      final master = await fetchPlaylist(url, referer: config.referer);
       if (_disposed || open != _openCount) return;
       if (master != null) {
         variants.value = variantsFromMasterPlaylist(master.text, master.url);
@@ -386,6 +472,7 @@ class MpvPlayer {
   /// [bitsPerSecond] (the lowest there is when none is), or the best there is
   /// when null. mpv reads this when a stream opens and ignores changes to a
   /// stream that is playing. It covers HLS variants and DASH representations.
+  @override
   Future<void> setHlsBitrateCap(int? bitsPerSecond) async {
     _bitrateCap = bitsPerSecond;
     await _ready;
@@ -395,19 +482,24 @@ class MpvPlayer {
     }
   }
 
+  @override
   Future<void> stop() async {
     await _ready;
     _forgetVariants();
     await player.stop();
   }
 
+  @override
   Future<void> dispose() async {
     _disposed = true;
     _openCount++;
     await _trackSub.cancel();
+    await _selectionSub.cancel();
     await player.dispose();
     variants.dispose();
     activeBitrate.dispose();
+    tracks.dispose();
+    externalPlayback.dispose();
     try {
       await _trimmedFile?.delete();
     } catch (_) {
@@ -421,34 +513,6 @@ class MpvPlayer {
       activeBitrate.value = null;
     }
     return ++_openCount;
-  }
-
-  /// The playlist at [url] and the URL it ended up at after redirects, which
-  /// its relative URIs resolve against. Null when it could not be fetched;
-  /// mpv then opens [url] itself.
-  Future<({String text, String url})?> _fetchMaster(String url) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-    try {
-      final request = await client.getUrl(Uri.parse(url));
-      request.headers.set(HttpHeaders.userAgentHeader, ApiConfig.mediaUserAgent);
-      request.headers.set(HttpHeaders.refererHeader, config.referer);
-      final response = await request.close().timeout(const Duration(seconds: 5));
-      if (response.statusCode != 200) {
-        await response.drain<void>();
-        return null;
-      }
-      final text =
-          await response.transform(utf8.decoder).join().timeout(const Duration(seconds: 5));
-      var finalUrl = Uri.parse(url);
-      for (final hop in response.redirects) {
-        finalUrl = finalUrl.resolveUri(hop.location);
-      }
-      return (text: text, url: finalUrl.toString());
-    } catch (_) {
-      return null;
-    } finally {
-      client.close(force: true);
-    }
   }
 
   /// Writes [playlist] where mpv can open it, or null if it can't be.
@@ -479,6 +543,7 @@ class MpvPlayer {
     if (_disposed || open != _openCount) return;
     activeBitrate.value = selectedVideoBitrate(json);
     if (_variantsFromTracks) variants.value = variantsFromTrackList(json);
+    _publishTracks();
   }
 }
 
