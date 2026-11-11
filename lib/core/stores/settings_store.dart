@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui' show Rect;
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,6 +25,7 @@ class SettingsStore extends ChangeNotifier {
   static const _dismissedUpdateKey = 'update_dismissed_version';
   static const _knownUpdateVersionKey = 'update_known_version';
   static const _knownUpdateUrlKey = 'update_known_url';
+  static const _miniPlayerBoundsKey = 'mini_player_bounds';
 
   final SharedPreferences _prefs;
 
@@ -164,6 +166,34 @@ class SettingsStore extends ChangeNotifier {
     } else {
       _prefs.setString(_knownUpdateVersionKey, value.version);
       _prefs.setString(_knownUpdateUrlKey, value.url);
+    }
+  }
+
+  /// Where the pop-out mini player last sat (x, y, width, height in logical
+  /// pixels), or null to use the default corner.
+  Rect? get miniPlayerBounds {
+    final raw = _prefs.getString(_miniPlayerBoundsKey);
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List && decoded.length == 4 && decoded.every((v) => v is num)) {
+        final [x, y, w, h] = [for (final v in decoded) (v as num).toDouble()];
+        if (w > 0 && h > 0) return Rect.fromLTWH(x, y, w, h);
+      }
+    } catch (_) {
+      // Corrupt value; use the default.
+    }
+    return null;
+  }
+
+  set miniPlayerBounds(Rect? value) {
+    if (value == null) {
+      _prefs.remove(_miniPlayerBoundsKey);
+    } else {
+      _prefs.setString(
+        _miniPlayerBoundsKey,
+        jsonEncode([value.left, value.top, value.width, value.height]),
+      );
     }
   }
 

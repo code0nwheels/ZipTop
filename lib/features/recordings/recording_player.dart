@@ -32,6 +32,8 @@ class RecordingPlayerView extends StatefulWidget {
     required this.config,
     required this.fullscreen,
     required this.onToggleFullscreen,
+    required this.mini,
+    required this.onToggleMini,
     required this.onClose,
   });
 
@@ -42,6 +44,10 @@ class RecordingPlayerView extends StatefulWidget {
   final ApiConfig config;
   final bool fullscreen;
   final VoidCallback onToggleFullscreen;
+
+  /// Popped out into the small always-on-top window.
+  final bool mini;
+  final VoidCallback onToggleMini;
   final VoidCallback onClose;
 
   @override
@@ -149,8 +155,13 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
       _seekBy(seekStep);
     } else if (key == LogicalKeyboardKey.keyF || key == LogicalKeyboardKey.f11) {
       widget.onToggleFullscreen();
+    } else if (key == LogicalKeyboardKey.keyP) {
+      if (event is KeyRepeatEvent) return KeyEventResult.handled;
+      widget.onToggleMini();
     } else if (key == LogicalKeyboardKey.escape) {
-      if (widget.fullscreen) {
+      if (widget.mini) {
+        widget.onToggleMini();
+      } else if (widget.fullscreen) {
         widget.onToggleFullscreen();
       } else {
         widget.onClose();
@@ -181,7 +192,8 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
             _focus.requestFocus();
             _touch();
           },
-          onDoubleTap: widget.onToggleFullscreen,
+          // Popped out, a double-click goes back to the full window.
+          onDoubleTap: widget.mini ? widget.onToggleMini : widget.onToggleFullscreen,
           child: ColoredBox(
             color: Colors.black,
             child: Stack(
@@ -209,47 +221,48 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
                     ignoring: !showControls,
                     child: Column(
                       children: [
-                        Container(
-                          padding: const EdgeInsets.fromLTRB(8, 8, 16, 32),
-                          decoration: const BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [Color(0xD9000000), Color(0x66000000), Colors.transparent],
-                              stops: [0, 0.5, 1],
+                        if (!widget.mini)
+                          Container(
+                            padding: const EdgeInsets.fromLTRB(8, 8, 16, 32),
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [Color(0xD9000000), Color(0x66000000), Colors.transparent],
+                                stops: [0, 0.5, 1],
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                IconButton(
+                                  tooltip: 'Back to recordings (Esc)',
+                                  onPressed: widget.onClose,
+                                  icon: const Icon(Icons.arrow_back),
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text.rich(
+                                    TextSpan(
+                                      text: r.title,
+                                      children: [
+                                        TextSpan(
+                                          text: '   ${r.streamName}',
+                                          style: const TextStyle(
+                                            color: ZipColors.textSecondary,
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          child: Row(
-                            children: [
-                              IconButton(
-                                tooltip: 'Back to recordings (Esc)',
-                                onPressed: widget.onClose,
-                                icon: const Icon(Icons.arrow_back),
-                              ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text.rich(
-                                  TextSpan(
-                                    text: r.title,
-                                    children: [
-                                      TextSpan(
-                                        text: '   ${r.streamName}',
-                                        style: const TextStyle(
-                                          color: ZipColors.textSecondary,
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.titleMedium,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
                         const Spacer(),
                         Container(
                           padding: const EdgeInsets.fromLTRB(12, 40, 12, 8),
@@ -264,11 +277,12 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
                           ),
                           child: Row(
                             children: [
-                              IconButton(
-                                tooltip: 'Back 30 seconds (Left)',
-                                onPressed: () => _seekBy(-seekStep),
-                                icon: const Icon(Icons.replay_30),
-                              ),
+                              if (!widget.mini)
+                                IconButton(
+                                  tooltip: 'Back 30 seconds (Left)',
+                                  onPressed: () => _seekBy(-seekStep),
+                                  icon: const Icon(Icons.replay_30),
+                                ),
                               IconButton(
                                 tooltip: _playing ? 'Pause (Space)' : 'Play (Space)',
                                 iconSize: 28,
@@ -281,11 +295,12 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
                                 onPressed: _player.playOrPause,
                                 icon: Icon(_playing ? Icons.pause_rounded : Icons.play_arrow_rounded),
                               ),
-                              IconButton(
-                                tooltip: 'Forward 30 seconds (Right)',
-                                onPressed: () => _seekBy(seekStep),
-                                icon: const Icon(Icons.forward_30),
-                              ),
+                              if (!widget.mini)
+                                IconButton(
+                                  tooltip: 'Forward 30 seconds (Right)',
+                                  onPressed: () => _seekBy(seekStep),
+                                  icon: const Icon(Icons.forward_30),
+                                ),
                               const SizedBox(width: 8),
                               Text(
                                 formatPosition(Duration(milliseconds: value.round())),
@@ -317,6 +332,13 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
                                 style: ZipText.mono(fontSize: 13),
                               ),
                               const SizedBox(width: 8),
+                              IconButton(
+                                tooltip: widget.mini ? 'Back to full window (P)' : 'Pop out (P)',
+                                onPressed: widget.onToggleMini,
+                                icon: Icon(
+                                  widget.mini ? Icons.open_in_full : Icons.picture_in_picture_alt,
+                                ),
+                              ),
                               IconButton(
                                 tooltip: widget.fullscreen ? 'Exit full screen (Esc)' : 'Full screen (F)',
                                 onPressed: widget.onToggleFullscreen,

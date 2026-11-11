@@ -26,6 +26,8 @@ class VideoPane extends StatefulWidget {
     required this.guide,
     required this.fullscreen,
     required this.onToggleFullscreen,
+    required this.mini,
+    required this.onToggleMini,
     required this.onActivity,
     required this.controlsVisible,
   });
@@ -35,6 +37,10 @@ class VideoPane extends StatefulWidget {
   final GuideRepository guide;
   final bool fullscreen;
   final VoidCallback onToggleFullscreen;
+
+  /// Popped out into the small always-on-top window.
+  final bool mini;
+  final VoidCallback onToggleMini;
 
   /// Mouse moved or clicked over the video.
   final VoidCallback onActivity;
@@ -93,7 +99,8 @@ class _VideoPaneState extends State<VideoPane> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onActivity,
-        onDoubleTap: widget.onToggleFullscreen,
+        // Popped out, a double-click goes back to the full window.
+        onDoubleTap: widget.mini ? widget.onToggleMini : widget.onToggleFullscreen,
         child: ColoredBox(
           color: Colors.black,
           child: Stack(
@@ -137,6 +144,8 @@ class _VideoPaneState extends State<VideoPane> {
                       guide: widget.guide,
                       fullscreen: widget.fullscreen,
                       onToggleFullscreen: widget.onToggleFullscreen,
+                      mini: widget.mini,
+                      onToggleMini: widget.onToggleMini,
                     ),
                   ),
                 ),
@@ -201,6 +210,8 @@ class _ControlBar extends StatelessWidget {
     required this.guide,
     required this.fullscreen,
     required this.onToggleFullscreen,
+    required this.mini,
+    required this.onToggleMini,
   });
 
   final LiveController live;
@@ -208,6 +219,10 @@ class _ControlBar extends StatelessWidget {
   final GuideRepository guide;
   final bool fullscreen;
   final VoidCallback onToggleFullscreen;
+
+  /// The mini player keeps only the channel, mute and the way back.
+  final bool mini;
+  final VoidCallback onToggleMini;
 
   @override
   Widget build(BuildContext context) {
@@ -233,22 +248,24 @@ class _ControlBar extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          IconButton(
-            tooltip: 'Previous channel in list (Up)',
-            onPressed: () => live.zap(-1),
-            icon: const Icon(Icons.keyboard_arrow_up),
-          ),
-          IconButton(
-            tooltip: 'Next channel in list (Down)',
-            onPressed: () => live.zap(1),
-            icon: const Icon(Icons.keyboard_arrow_down),
-          ),
-          IconButton(
-            tooltip: 'Last channel (Backspace)',
-            onPressed: live.previous == null ? null : live.tunePrevious,
-            icon: const Icon(Icons.swap_horiz),
-          ),
-          const SizedBox(width: 8),
+          if (!mini) ...[
+            IconButton(
+              tooltip: 'Previous channel in list (Up)',
+              onPressed: () => live.zap(-1),
+              icon: const Icon(Icons.keyboard_arrow_up),
+            ),
+            IconButton(
+              tooltip: 'Next channel in list (Down)',
+              onPressed: () => live.zap(1),
+              icon: const Icon(Icons.keyboard_arrow_down),
+            ),
+            IconButton(
+              tooltip: 'Last channel (Backspace)',
+              onPressed: live.previous == null ? null : live.tunePrevious,
+              icon: const Icon(Icons.swap_horiz),
+            ),
+            const SizedBox(width: 8),
+          ],
           Expanded(
             child: channel == null
                 ? const SizedBox.shrink()
@@ -304,7 +321,7 @@ class _ControlBar extends StatelessWidget {
                     ],
                   ),
           ),
-          if (channel != null)
+          if (channel != null && !mini)
             IconButton(
               tooltip: favorite ? 'Remove from favorites' : 'Add to favorites',
               onPressed: () => _toggleFavorite(context, channel),
@@ -313,39 +330,40 @@ class _ControlBar extends StatelessWidget {
                 color: favorite ? ZipColors.accentText : null,
               ),
             ),
-          if (channel != null) RecordButton(dvr: dvr, guide: guide, channel: channel),
-          StreamBuilder<Tracks>(
-            stream: player.stream.tracks,
-            initialData: player.state.tracks,
-            builder: (context, snapshot) {
-              final tracks = snapshot.data ?? player.state.tracks;
-              final current = player.state.track;
-              return Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _QualityMenu(live: live),
-                  _TrackMenu<AudioTrack>(
-                    tooltip: 'Audio',
-                    icon: Icons.audiotrack_outlined,
-                    tracks: [for (final t in tracks.audio) if (t.id != 'no') t],
-                    currentId: current.audio.id,
-                    idOf: (t) => t.id,
-                    labelOf: (t) => _namedLabel(t.id, t.title, t.language, 'Track'),
-                    onSelected: player.setAudioTrack,
-                  ),
-                  _TrackMenu<SubtitleTrack>(
-                    tooltip: 'Captions',
-                    icon: Icons.closed_caption_outlined,
-                    tracks: [for (final t in tracks.subtitle) if (t.id != 'auto') t],
-                    currentId: current.subtitle.id,
-                    idOf: (t) => t.id,
-                    labelOf: (t) => _namedLabel(t.id, t.title, t.language, 'Captions'),
-                    onSelected: player.setSubtitleTrack,
-                  ),
-                ],
-              );
-            },
-          ),
+          if (channel != null && !mini) RecordButton(dvr: dvr, guide: guide, channel: channel),
+          if (!mini)
+            StreamBuilder<Tracks>(
+              stream: player.stream.tracks,
+              initialData: player.state.tracks,
+              builder: (context, snapshot) {
+                final tracks = snapshot.data ?? player.state.tracks;
+                final current = player.state.track;
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _QualityMenu(live: live),
+                    _TrackMenu<AudioTrack>(
+                      tooltip: 'Audio',
+                      icon: Icons.audiotrack_outlined,
+                      tracks: [for (final t in tracks.audio) if (t.id != 'no') t],
+                      currentId: current.audio.id,
+                      idOf: (t) => t.id,
+                      labelOf: (t) => _namedLabel(t.id, t.title, t.language, 'Track'),
+                      onSelected: player.setAudioTrack,
+                    ),
+                    _TrackMenu<SubtitleTrack>(
+                      tooltip: 'Captions',
+                      icon: Icons.closed_caption_outlined,
+                      tracks: [for (final t in tracks.subtitle) if (t.id != 'auto') t],
+                      currentId: current.subtitle.id,
+                      idOf: (t) => t.id,
+                      labelOf: (t) => _namedLabel(t.id, t.title, t.language, 'Captions'),
+                      onSelected: player.setSubtitleTrack,
+                    ),
+                  ],
+                );
+              },
+            ),
           ListenableBuilder(
             listenable: live.settings,
             builder: (context, _) {
@@ -364,26 +382,32 @@ class _ControlBar extends StatelessWidget {
                               : Icons.volume_up,
                     ),
                   ),
-                  SizedBox(
-                    width: 110,
-                    child: SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        trackHeight: 3,
-                        overlayShape: SliderComponentShape.noOverlay,
-                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                      ),
-                      child: Slider(
-                        value: volume,
-                        max: 100,
-                        onChanged: live.setVolume,
+                  if (!mini)
+                    SizedBox(
+                      width: 110,
+                      child: SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 3,
+                          overlayShape: SliderComponentShape.noOverlay,
+                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                        ),
+                        child: Slider(
+                          value: volume,
+                          max: 100,
+                          onChanged: live.setVolume,
+                        ),
                       ),
                     ),
-                  ),
                 ],
               );
             },
           ),
-          const SizedBox(width: 8),
+          if (!mini) const SizedBox(width: 8),
+          IconButton(
+            tooltip: mini ? 'Back to full window (P)' : 'Pop out (P)',
+            onPressed: onToggleMini,
+            icon: Icon(mini ? Icons.open_in_full : Icons.picture_in_picture_alt),
+          ),
           IconButton(
             tooltip: fullscreen ? 'Exit full screen (Esc)' : 'Full screen (F)',
             onPressed: onToggleFullscreen,
