@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
+import 'core/platform/app_channel.dart';
 import 'core/platform/startup.dart';
 import 'core/stores/settings_store.dart';
 import 'dvr/dvr_store.dart';
@@ -18,6 +19,8 @@ import 'theme.dart';
 Future<void> main(List<String> args) async {
   final startHidden = args.contains(StartupRegistration.minimizedFlag);
   WidgetsFlutterBinding.ensureInitialized();
+  // macOS: answer quit requests from the first frame on (see AppChannel).
+  AppChannel.install();
   MediaKit.ensureInitialized(libmpv: bundledLibmpv());
   await windowManager.ensureInitialized();
   final settings = await SettingsStore.load();

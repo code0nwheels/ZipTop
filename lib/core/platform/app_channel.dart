@@ -11,9 +11,14 @@ import 'package:flutter/services.dart';
 /// here instead, so ZipTop shuts down as it does when the window is closed.
 /// Once it is ready, [allowTerminate] lets the next terminate through.
 ///
-/// Only the signed-in shell listens. When nothing does (the pairing screen,
-/// after signing out) the request goes unanswered and the delegate quits at
-/// once. Does nothing on other platforms.
+/// Every request gets an answer: `true` when the signed-in shell takes it,
+/// `false` when nothing does (the pairing screen, after signing out), and
+/// the delegate then quits at once. Flutter doesn't answer for a channel
+/// with no handler: it holds the message until one is set, which swallowed
+/// quits on the pairing screen and delivered them later, after signing in.
+/// So [install] sets the handler for the app's whole life, and the shell
+/// only comes and goes through [listen] and [stopListening].
+/// Does nothing on other platforms.
 class AppChannel {
   static const channel = MethodChannel('ziptop/app');
 
@@ -21,25 +26,34 @@ class AppChannel {
   @visibleForTesting
   static bool enabled = Platform.isMacOS;
 
-  /// Calls [onQuitRequested] whenever the viewer asks macOS to quit ZipTop.
-  ///
-  /// The delegate is told straight away that the request was taken (`true`),
-  /// not when [onQuitRequested] finishes: that may wait on the viewer
-  /// answering "Keep ZipTop running?", or on the streams closing.
-  static void listen({required Future<void> Function() onQuitRequested}) {
+  static Future<void> Function()? _onQuitRequested;
+
+  /// Answers the delegate from now on. Call once, at start-up.
+  static void install() {
     if (!enabled) return;
     channel.setMethodCallHandler((call) async {
       if (call.method != 'quitRequested') {
         throw MissingPluginException('ziptop/app has no ${call.method}');
       }
+      final onQuitRequested = _onQuitRequested;
+      if (onQuitRequested == null) return false;
       unawaited(onQuitRequested());
       return true;
     });
   }
 
+  /// Calls [onQuitRequested] whenever the viewer asks macOS to quit ZipTop,
+  /// until [stopListening].
+  ///
+  /// The delegate is told straight away that the request was taken (`true`),
+  /// not when [onQuitRequested] finishes: that may wait on the viewer
+  /// answering "Keep ZipTop running?", or on the streams closing.
+  static void listen({required Future<void> Function() onQuitRequested}) {
+    _onQuitRequested = onQuitRequested;
+  }
+
   static void stopListening() {
-    if (!enabled) return;
-    channel.setMethodCallHandler(null);
+    _onQuitRequested = null;
   }
 
   /// Lets the app terminate; call just before `windowManager.destroy()`.
