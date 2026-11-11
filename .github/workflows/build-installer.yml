@@ -53,7 +53,7 @@ jobs:
       release: ${{ steps.version.outputs.release }}
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Tags are needed to number builds after the latest release.
           fetch-depth: 0
@@ -97,7 +97,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -109,7 +109,7 @@ jobs:
       # windows/CMakeLists.txt downloads a pinned libmpv (~32 MB) into
       # windows/third_party when it is missing; keep it between runs.
       - name: Cache libmpv
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: windows/third_party/libmpv
           key: libmpv-${{ hashFiles('windows/CMakeLists.txt') }}
@@ -141,7 +141,7 @@ jobs:
           -BuildNumber ${{ needs.version.outputs.build_number }}
 
       - name: Upload installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ZipTop-Setup-${{ needs.version.outputs.version }}
           path: installer/output/ZipTop-Setup-*.exe
@@ -156,7 +156,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install build dependencies
         run: |
@@ -182,7 +182,7 @@ jobs:
       # linux/third_party/build_libmpv.sh builds libmpv 0.42 and FFmpeg from
       # pinned sources (several minutes); keep the result between runs.
       - name: Cache libmpv
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             linux/third_party/libmpv
@@ -205,7 +205,7 @@ jobs:
           --build-number ${{ needs.version.outputs.build_number }}
 
       - name: Upload AppImage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ZipTop-${{ needs.version.outputs.version }}-x86_64.AppImage
           path: build/appimage/ZipTop-*-x86_64.AppImage
@@ -220,7 +220,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Build tools only; macos/third_party/build_libmpv.sh builds every
       # library the app ships from pinned sources.
@@ -240,7 +240,7 @@ jobs:
       # library, so the next run carries on from the one that failed.
       - name: Restore libmpv
         id: libmpv-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             macos/third_party/libmpv
@@ -269,7 +269,7 @@ jobs:
 
       - name: Save libmpv
         if: always() && steps.libmpv-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             macos/third_party/libmpv
@@ -333,7 +333,7 @@ jobs:
 
       - name: Upload launch screenshot and log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-smoke-test
           path: smoke/
@@ -341,7 +341,7 @@ jobs:
           retention-days: 14
 
       - name: Upload DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ZipTop-${{ needs.version.outputs.version }}-macos-arm64.dmg
           path: build/dmg/ZipTop-*-macos-arm64.dmg
@@ -355,7 +355,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download builds
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
