@@ -302,7 +302,16 @@ jobs:
           # applicationShouldTerminate), not with kill. It is on the pairing
           # screen, where a quit was once swallowed and ZipTop had to be
           # force quit.
+          # ZipTop always turns down the first request (so Dart can shut down
+          # first) and then quits by itself, which AppleScript reports as
+          # "User canceled" (-128): the event was delivered.
+          sent=0
           if osascript -e 'tell application id "com.zipstreams.ziptop" to quit' > smoke/quit.log 2>&1; then
+            sent=1
+          elif grep -q '(-128)' smoke/quit.log; then
+            sent=1
+          fi
+          if [ "$sent" = 1 ]; then
             for _ in $(seq 20); do
               kill -0 "$pid" 2>/dev/null || break
               sleep 0.5
