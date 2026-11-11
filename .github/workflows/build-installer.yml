@@ -225,6 +225,16 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # The Flutter action's post step runs on the host, not in the container,
+      # and hashes every pubspec.lock in the workspace. Flutter's generated
+      # plugin symlinks point into the container's pub cache, which the host
+      # cannot follow, so remove them (and let the host read everything).
+      - name: Tidy the workspace for the host
+        if: always()
+        run: |
+          rm -rf linux/flutter/ephemeral
+          chmod -R a+rX .
+
   macos:
     name: macOS DMG
     needs: version
