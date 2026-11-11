@@ -16,13 +16,13 @@
 # linux/CMakeLists.txt reads ZIPTOP_LIBMPV_TAG from this file, so bump it
 # whenever a pin or a build option changes.
 #
-# Build dependencies (Ubuntu 22.04 names, as in CI):
-#   build-essential nasm git curl python3-venv pkg-config patchelf hwdata
+# Build dependencies (Debian 13 names, as in CI):
+#   build-essential nasm git curl xz-utils python3-venv pkg-config patchelf hwdata
 #   libfreetype-dev libfribidi-dev libharfbuzz-dev libfontconfig-dev
 #   libva-dev libdrm-dev libpulse-dev libasound2-dev
 #   libegl-dev libgl-dev libx11-dev libxext-dev libxpresent-dev
 #   libxrandr-dev libxss-dev libxkbcommon-dev libxv-dev zlib1g-dev libssl-dev
-# meson and ninja come from pip (22.04's meson is too old for mpv 0.42).
+# meson and ninja come from pip, pinned (distributions' versions vary).
 #
 # Usage: linux/third_party/build_libmpv.sh   (does nothing if already built)
 set -euo pipefail
@@ -99,8 +99,8 @@ meson_common=(--prefix "$stage" --libdir lib --buildtype release -Ddefault_libra
 
 # --- libdrm ---------------------------------------------------------------
 # mpv 0.42 needs libdrm 2.4.114 or newer for VA-API through the DRM render
-# node (hardware decoding on X11 and Wayland alike); Ubuntu 22.04 has
-# 2.4.113. Only the core library: the GPU-specific parts stay the system's.
+# node (hardware decoding on X11 and Wayland alike). Built here so every
+# build gets the same, pinned version. Only the core library: the GPU-specific parts stay the system's.
 if ! built "libdrm-$LIBDRM_VERSION"; then
   fetch "https://dri.freedesktop.org/libdrm/libdrm-$LIBDRM_VERSION.tar.xz" "$LIBDRM_SHA256" "libdrm-$LIBDRM_VERSION.tar.xz"
   unpack "libdrm-$LIBDRM_VERSION.tar.xz" libdrm
@@ -113,7 +113,7 @@ if ! built "libdrm-$LIBDRM_VERSION"; then
 fi
 
 # --- libdisplay-info -------------------------------------------------------
-# Also required by mpv's DRM support, and also newer than Ubuntu 22.04 has.
+# Also required by mpv's DRM support; pinned like libdrm.
 if ! built "libdisplay-info-$LIBDISPLAY_INFO_VERSION"; then
   fetch "https://gitlab.freedesktop.org/emersion/libdisplay-info/-/releases/$LIBDISPLAY_INFO_VERSION/downloads/libdisplay-info-$LIBDISPLAY_INFO_VERSION.tar.xz" "$LIBDISPLAY_INFO_SHA256" "libdisplay-info-$LIBDISPLAY_INFO_VERSION.tar.xz"
   unpack "libdisplay-info-$LIBDISPLAY_INFO_VERSION.tar.xz" libdisplay-info
