@@ -98,6 +98,13 @@ endif()
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# Debian 13's libayatana-appindicator deprecates app_indicator_new() in favour
+# of libayatana-appindicator-glib, which tray_manager still uses. Keep the
+# warning, but don't let the plugins' -Werror fail the build over it.
+if(TARGET tray_manager_plugin)
+  target_compile_options(tray_manager_plugin PRIVATE -Wno-error=deprecated-declarations)
+endif()
+
 
 # === Installation ===
 # By default, "installing" just makes a relocatable bundle in the build
