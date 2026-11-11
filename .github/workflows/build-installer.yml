@@ -178,6 +178,9 @@ jobs:
             libegl-dev libgl-dev libx11-dev libxext-dev libxpresent-dev \
             libxrandr-dev libxss-dev libxkbcommon-dev libxv-dev \
             zlib1g-dev libssl-dev
+          # The Flutter SDK is a git checkout owned by the runner's user, not
+          # the container's root, and git refuses to work in it otherwise.
+          git config --global --add safe.directory '*'
 
       - name: Check out
         uses: actions/checkout@v7
