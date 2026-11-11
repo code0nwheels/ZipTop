@@ -32,6 +32,64 @@ mid-backup/index.m3u8
     });
   });
 
+  group('picking a variant like hls-bitrate', () {
+    const rates = [836280, 6221600, 2149280, 2149280];
+
+    test('no cap is the best', () => expect(pickVariant(rates, null), 1));
+    test('a cap takes the best under it, first on a tie', () {
+      expect(pickVariant(rates, 3000000), 2);
+    });
+    test('a cap under everything takes the lowest', () => expect(pickVariant(rates, 100), 0));
+    test('nothing to pick', () => expect(pickVariant(const [], null), isNull));
+  });
+
+  group('trimming a master playlist to one variant', () {
+    const base = 'https://cdn.example/api/hls/abc/tok/ch1/safari/index.m3u8';
+    const master = '''
+#EXTM3U
+#EXT-X-VERSION:6
+#EXT-X-INDEPENDENT-SEGMENTS
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud1",LANGUAGE="en",NAME="English",DEFAULT=YES,URI="audio/en.m3u8"
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud2",LANGUAGE="en",NAME="English AC-3",URI="audio/ac3.m3u8"
+#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID="cc1",NAME="CC1",INSTREAM-ID="CC1"
+
+#EXT-X-STREAM-INF:BANDWIDTH=836280,RESOLUTION=848x480,AUDIO="aud1",CLOSED-CAPTIONS="cc1"
+variant/low.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=6221600,RESOLUTION=1920x1080,AUDIO="aud1",CLOSED-CAPTIONS="cc1"
+variant/hi.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=6400000,RESOLUTION=1920x1080,AUDIO="aud2",CLOSED-CAPTIONS="cc1"
+variant/hi-ac3.m3u8
+#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=90000,URI="variant/iframes.m3u8"
+''';
+
+    test('keeps the chosen variant and only the renditions it uses', () {
+      final trimmed = trimMasterPlaylist(master, base, cap: 6300000)!;
+      expect(trimmed, '''
+#EXTM3U
+#EXT-X-VERSION:6
+#EXT-X-INDEPENDENT-SEGMENTS
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud1",LANGUAGE="en",NAME="English",DEFAULT=YES,URI="https://cdn.example/api/hls/abc/tok/ch1/safari/audio/en.m3u8"
+#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID="cc1",NAME="CC1",INSTREAM-ID="CC1"
+#EXT-X-STREAM-INF:BANDWIDTH=6221600,RESOLUTION=1920x1080,AUDIO="aud1",CLOSED-CAPTIONS="cc1"
+https://cdn.example/api/hls/abc/tok/ch1/safari/variant/hi.m3u8
+''');
+    });
+
+    test('no cap takes the top variant and its own audio group', () {
+      final trimmed = trimMasterPlaylist(master, base)!;
+      expect(trimmed, contains('safari/variant/hi-ac3.m3u8'));
+      expect(trimmed, contains('audio/ac3.m3u8'));
+      expect(trimmed, isNot(contains('audio/en.m3u8')));
+      expect(trimmed, isNot(contains('iframes')));
+      expect('#EXT-X-STREAM-INF'.allMatches(trimmed).length, 1);
+    });
+
+    test('a media playlist is left alone', () {
+      const media = '#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nseg1.ts\n';
+      expect(trimMasterPlaylist(media, base), isNull);
+    });
+  });
+
   group('mpv track-list', () {
     // The shape libmpv 0.42 reports for a DASH manifest with several
     // video representations.

@@ -85,6 +85,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   bool _playingFromStart = false;
   _View _view = _View.live;
   bool _fullscreen = false;
+  bool _maximizedBeforeFullscreen = false;
   bool _edgePanel = false;
   bool _controlsVisible = true;
   Timer? _controlsTimer;
@@ -364,7 +365,22 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   }
 
   Future<void> _setFullscreen(bool value) async {
+    // Windows: window_manager leaves the title bar showing when it goes full
+    // screen from a maximized window (it only drops the frame for a normal
+    // one). Restore the window first and maximize it again on the way out.
+    if (Platform.isWindows && value && !_fullscreen && await windowManager.isMaximized()) {
+      _maximizedBeforeFullscreen = true;
+      // unmaximize() only posts the restore; wait until it has happened.
+      await windowManager.unmaximize();
+      for (var i = 0; i < 40 && await windowManager.isMaximized(); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    }
     await windowManager.setFullScreen(value);
+    if (!value && _maximizedBeforeFullscreen) {
+      _maximizedBeforeFullscreen = false;
+      await windowManager.maximize();
+    }
     _syncFullscreen(value);
     _focus.requestFocus();
   }

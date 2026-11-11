@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import '../models/json.dart';
 import '../models/playback.dart';
 import 'api_client.dart';
@@ -9,13 +7,17 @@ import 'api_client.dart';
 /// Ported from the Android app's `StreamRepository`: the same endpoints and
 /// the same reading of their 403 bodies.
 class StreamsApi {
-  StreamsApi(this._client, {bool? preferAppleStream})
-      : _preferAppleStream = preferAppleStream ?? Platform.isMacOS;
+  StreamsApi(this._client, {this._preferAppleStream = true});
 
   final ApiClient _client;
 
-  /// Asks for a channel's `apple_stream` (HLS) instead of its DASH manifest.
-  /// The Mac libmpv build cannot play the backend's DASH.
+  /// Asks for a channel's `apple_stream` (HLS) instead of its DASH manifest,
+  /// on every platform. FFmpeg's DASH demuxer, which mpv plays DASH through,
+  /// loses its place in the backend's live SegmentTimeline manifests: it
+  /// fetches audio segments again, skips ahead by different amounts for audio
+  /// and video, and mpv resets playback (repeated audio, video jumping back).
+  /// The same channels over HLS play cleanly. The Mac libmpv build cannot
+  /// play the DASH at all.
   final bool _preferAppleStream;
 
   /// The backend picks the Apple HLS source for any User-Agent containing

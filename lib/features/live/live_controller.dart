@@ -51,6 +51,7 @@ class LiveController extends ChangeNotifier {
   String? _playingUrl;
   String? _failure;
   final _progress = ProgressTracker();
+  SessionPhase? _loggedPhase;
   String _digits = '';
   bool _digitsInvalid = false;
   double _unmutedVolume = 100;
@@ -226,6 +227,7 @@ class LiveController extends ChangeNotifier {
     final cap = bitsPerSecond == null || bitsPerSecond <= 0 ? null : bitsPerSecond;
     if (cap == settings.maxBitrate) return;
     settings.maxBitrate = cap;
+    unawaited(player.note('bitrate cap ${cap ?? 'none'}, reopening'));
     final channel = _current;
     if (channel == null || _playingUrl == null || session.streamId != channel.id) return;
     _cancelRecovery();
@@ -272,6 +274,11 @@ class LiveController extends ChangeNotifier {
 
   void _onSession() {
     final url = session.url;
+    if (session.phase != _loggedPhase) {
+      _loggedPhase = session.phase;
+      final why = session.message;
+      unawaited(player.note('session ${session.phase.name}${why == null ? '' : ': $why'}'));
+    }
     if (session.phase == SessionPhase.playing && url != null) {
       if (url != _playingUrl) {
         _playingUrl = url;
@@ -316,13 +323,16 @@ class LiveController extends ChangeNotifier {
   void _onBuffering(bool buffering) {
     _stallTimer?.cancel();
     if (buffering && _playingUrl != null) {
-      _stallTimer = Timer(_stallLimit, () => _recover(_retry.nextAfterError()));
+      _stallTimer = Timer(
+        _stallLimit,
+        () => _recover(_retry.nextAfterError(), 'buffering for ${_stallLimit.inSeconds} s'),
+      );
     }
   }
 
   void _onEnded() {
     if (_playingUrl == null) return;
-    _recover(_retry.nextAfterEnded());
+    _recover(_retry.nextAfterEnded(), 'stream ended');
   }
 
   void _onError(String message) {
@@ -334,13 +344,14 @@ class LiveController extends ChangeNotifier {
     _errorTimer = Timer(_errorGrace, () {
       // Still loading is the stall timer's business, not an error.
       if (!_progress.movedSince(mark) && !player.player.state.buffering) {
-        _recover(_retry.nextAfterError());
+        _recover(_retry.nextAfterError(), 'error with no progress: $message');
       }
     });
   }
 
-  void _recover(Duration? wait) {
+  void _recover(Duration? wait, String reason) {
     if (_playingUrl == null || _retryTimer?.isActive == true) return;
+    unawaited(player.note('reload (${wait == null ? 'giving up' : 'in ${wait.inSeconds} s'}): $reason'));
     if (wait == null) {
       _failure = "This channel isn't playing right now.";
       _playingUrl = null;
