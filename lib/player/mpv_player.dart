@@ -207,6 +207,12 @@ class MpvPlayer {
         // ones: repeated audio and video jumping back.
         'cache-secs': '${tuning.readaheadSeconds}',
       };
+      final logFile = diagnosticLogPath;
+      if (logFile != null && identical(tuning, PlayerTuning.main)) {
+        // mpv writes its verbose log here: demuxer, segment and timestamp
+        // detail that the warn-level log stream leaves out.
+        options['log-file'] = logFile;
+      }
       for (final entry in options.entries) {
         try {
           await native.setProperty(entry.key, entry.value);
@@ -219,6 +225,27 @@ class MpvPlayer {
     await player.setSubtitleTrack(SubtitleTrack.no());
   }
 
+  /// Where the main player writes mpv's verbose log, from the
+  /// `ZIPTOP_MPV_LOG` environment variable. Null (no log) when unset.
+  static final String? diagnosticLogPath = () {
+    final path = Platform.environment['ZIPTOP_MPV_LOG']?.trim();
+    return path == null || path.isEmpty ? null : path;
+  }();
+
+  /// Writes [text] into the diagnostic log, if there is one, so the app's
+  /// own decisions (reloads, quality changes) line up with mpv's.
+  Future<void> note(String text) async {
+    if (diagnosticLogPath == null || _disposed) return;
+    await _ready;
+    final native = player.platform;
+    if (native is! NativePlayer) return;
+    try {
+      await native.command(['print-text', 'ZipTop: $text']);
+    } catch (_) {
+      // Diagnostics only.
+    }
+  }
+
   /// Starts playing a signed stream URL (HLS or DASH). Check [canPlay] first.
   Future<void> play(String url) async {
     if (!await canPlay(url)) {
@@ -229,6 +256,7 @@ class MpvPlayer {
     // master playlist. For DASH it lists every representation.
     _variantsFromTracks = isDashUrl(url);
     if (!_variantsFromTracks) unawaited(_loadMasterVariants(url, open));
+    unawaited(note('open ${isDashUrl(url) ? 'DASH' : 'HLS'} stream'));
     await player.open(
       Media(
         url,
