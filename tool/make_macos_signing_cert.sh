@@ -72,5 +72,5 @@ Back up that folder, then store both as repository secrets (from the repo):
   gh secret set MACOS_SIGNING_CERT_PASSWORD < "$out/ziptop-signing.password"
 
 The macOS build then signs with it; its log shows
-  designated => identifier "com.zipstreams.ziptop" and certificate root = H"$fingerprint"
+  designated => identifier "com.zipstreams.ziptop" and certificate leaf = H"$fingerprint" (in lower case)
 EOF

@@ -119,9 +119,15 @@ fi
 codesign --verify --deep --strict "$app"
 requirement="$(codesign -d -r- "$app" 2>&1 | grep 'designated =>' || true)"
 echo "$requirement"
-if [[ -n "${MACOS_SIGN_IDENTITY:-}" && "$requirement" != *'certificate root = H"'* ]]; then
-  echo "The signature does not name the certificate, so updates would ask for the keychain again." >&2
-  exit 1
+# A self-signed certificate is its own leaf and root; codesign names it as
+# `certificate leaf = H"<its SHA-1>"`. Anything else (an ad-hoc cdhash)
+# changes with every build, and the keychain would ask again.
+if [[ -n "${MACOS_SIGN_IDENTITY:-}" ]]; then
+  lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+  if [[ "$(lower "$requirement")" != *"certificate "*" = h\"$(lower "$MACOS_SIGN_IDENTITY")\""* ]]; then
+    echo "The signature does not name certificate $MACOS_SIGN_IDENTITY, so updates would ask for the keychain again." >&2
+    exit 1
+  fi
 fi
 
 out="$root/build/dmg"
