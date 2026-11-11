@@ -8,6 +8,7 @@ import '../../core/models/catalog.dart';
 import '../../core/session/playback_session.dart';
 import '../../core/stores/guide_repository.dart';
 import '../../dvr/dvr_service.dart';
+import '../../player/mpv_player.dart' show StreamVariant, formatBitrate;
 import '../../theme.dart';
 import '../../ui/ch_num_chip.dart';
 import '../../ui/zip_spinner.dart';
@@ -322,15 +323,7 @@ class _ControlBar extends StatelessWidget {
               return Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _TrackMenu<VideoTrack>(
-                    tooltip: 'Quality',
-                    icon: Icons.high_quality_outlined,
-                    tracks: [for (final t in tracks.video) if (t.id != 'no') t],
-                    currentId: current.video.id,
-                    idOf: (t) => t.id,
-                    labelOf: _videoLabel,
-                    onSelected: player.setVideoTrack,
-                  ),
+                  _QualityMenu(live: live),
                   _TrackMenu<AudioTrack>(
                     tooltip: 'Audio',
                     icon: Icons.audiotrack_outlined,
@@ -411,14 +404,6 @@ class _ControlBar extends StatelessWidget {
     }
   }
 
-  static String _videoLabel(VideoTrack t) {
-    if (t.id == 'auto') return 'Auto';
-    final height = t.h;
-    final kbps = t.bitrate == null ? null : (t.bitrate! / 1000).round();
-    if (height != null) return kbps == null ? '${height}p' : '${height}p  ·  $kbps kbps';
-    return t.title ?? 'Track ${t.id}';
-  }
-
   static String _namedLabel(String id, String? title, String? language, String fallback) {
     if (id == 'auto') return 'Auto';
     if (id == 'no') return 'Off';
@@ -427,6 +412,57 @@ class _ControlBar extends StatelessWidget {
       if (language != null && language.isNotEmpty) language.toUpperCase(),
     ];
     return parts.isEmpty ? '$fallback $id' : parts.join('  ·  ');
+  }
+}
+
+/// Picks the stream's bitrate. Switching mpv's video track on the fly would
+/// mix variants, so a pick caps the bitrate and reopens the stream.
+class _QualityMenu extends StatelessWidget {
+  const _QualityMenu({required this.live});
+
+  final LiveController live;
+
+  /// The menu value for "Best available".
+  static const _best = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final player = live.player;
+    return ListenableBuilder(
+      listenable: Listenable.merge([player.variants, player.activeBitrate, live.settings]),
+      builder: (context, _) {
+        final variants = player.variants.value;
+        final active = player.activeBitrate.value;
+        final cap = live.maxBitrate;
+        StreamVariant? playing;
+        for (final v in variants) {
+          if (v.bitrate == active) playing = v;
+        }
+        final bestLabel = cap == null && playing != null
+            ? 'Best available  ·  ${playing.height != null ? '${playing.height}p' : formatBitrate(playing.bitrate)}'
+            : 'Best available';
+        return PopupMenuButton<int>(
+          tooltip: playing == null ? 'Quality' : 'Quality: ${playing.label}',
+          icon: const Icon(Icons.high_quality_outlined),
+          enabled: variants.length > 1,
+          onSelected: (bitrate) => unawaited(live.setMaxBitrate(bitrate == _best ? null : bitrate)),
+          itemBuilder: (context) => [
+            CheckedPopupMenuItem<int>(
+              value: _best,
+              checked: cap == null,
+              child: Text(bestLabel),
+            ),
+            const PopupMenuDivider(),
+            for (final v in variants)
+              CheckedPopupMenuItem<int>(
+                value: v.bitrate,
+                checked: cap != null && v.bitrate == (active ?? cap),
+                child: Text(v.label),
+              ),
+          ],
+        );
+      },
+    );
   }
 }
 

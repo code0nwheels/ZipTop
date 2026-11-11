@@ -15,6 +15,7 @@ class SettingsStore extends ChangeNotifier {
   static const _recentsKey = 'recent_stream_ids';
   static const _lastChannelKey = 'last_stream_id';
   static const _volumeKey = 'volume';
+  static const _maxBitrateKey = 'max_bitrate';
   static const _panelOpenKey = 'channel_panel_open';
   static const _categoriesOpenKey = 'categories_open';
   static const _multiviewIdsKey = 'multiview_stream_ids';
@@ -72,6 +73,23 @@ class SettingsStore extends ChangeNotifier {
   double get volume => (_prefs.getDouble(_volumeKey) ?? 100).clamp(0, 100).toDouble();
   set volume(double value) {
     _prefs.setDouble(_volumeKey, value.clamp(0, 100).toDouble());
+    notifyListeners();
+  }
+
+  /// The most bits per second the viewer wants a stream to use, or null for
+  /// the best each channel offers. Each channel plays its best variant at or
+  /// under this.
+  int? get maxBitrate {
+    final value = _prefs.getInt(_maxBitrateKey);
+    return value == null || value <= 0 ? null : value;
+  }
+
+  set maxBitrate(int? value) {
+    if (value == null || value <= 0) {
+      _prefs.remove(_maxBitrateKey);
+    } else {
+      _prefs.setInt(_maxBitrateKey, value);
+    }
     notifyListeners();
   }
 

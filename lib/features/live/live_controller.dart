@@ -50,7 +50,7 @@ class LiveController extends ChangeNotifier {
   String? _scopeName;
   String? _playingUrl;
   String? _failure;
-  Duration _position = Duration.zero;
+  final _progress = ProgressTracker();
   String _digits = '';
   bool _digitsInvalid = false;
   double _unmutedVolume = 100;
@@ -217,6 +217,23 @@ class LiveController extends ChangeNotifier {
     }
   }
 
+  /// The bitrate cap the viewer picked, or null for the best there is.
+  int? get maxBitrate => settings.maxBitrate;
+
+  /// Caps the bitrate for this and later channels, and reopens the playing
+  /// stream at it: mpv only picks a variant when a stream opens.
+  Future<void> setMaxBitrate(int? bitsPerSecond) async {
+    final cap = bitsPerSecond == null || bitsPerSecond <= 0 ? null : bitsPerSecond;
+    if (cap == settings.maxBitrate) return;
+    settings.maxBitrate = cap;
+    final channel = _current;
+    if (channel == null || _playingUrl == null || session.streamId != channel.id) return;
+    _cancelRecovery();
+    _retry.reset();
+    _playingUrl = null;
+    await session.reopen();
+  }
+
   /// Manual retry from the error state.
   Future<void> retryNow() async {
     final channel = _current;
@@ -258,7 +275,7 @@ class LiveController extends ChangeNotifier {
     if (session.phase == SessionPhase.playing && url != null) {
       if (url != _playingUrl) {
         _playingUrl = url;
-        _position = Duration.zero;
+        _progress.restart();
         unawaited(_start(url));
       }
     } else if (session.phase != SessionPhase.preparing) {
@@ -277,6 +294,8 @@ class LiveController extends ChangeNotifier {
     // The viewer may have moved on while the player was getting ready.
     if (_disposed || _playingUrl != url) return;
     if (playable) {
+      await player.setHlsBitrateCap(settings.maxBitrate);
+      if (_disposed || _playingUrl != url) return;
       await player.play(url);
       return;
     }
@@ -288,8 +307,7 @@ class LiveController extends ChangeNotifier {
 
   void _onPosition(Duration position) {
     // Real progress means the stream is healthy again.
-    if (position > _position + const Duration(seconds: 2)) {
-      _position = position;
+    if (_progress.update(position)) {
       _retry.reset();
       _errorTimer?.cancel();
     }
@@ -311,11 +329,11 @@ class LiveController extends ChangeNotifier {
     if (_playingUrl == null || !isReloadableError(message)) return;
     // mpv also reports recoverable hiccups here. Only treat it as fatal if
     // playback has not moved on a few seconds later.
-    final mark = _position;
+    final mark = _progress.played;
     _errorTimer?.cancel();
     _errorTimer = Timer(_errorGrace, () {
       // Still loading is the stall timer's business, not an error.
-      if (_position == mark && !player.player.state.buffering) {
+      if (!_progress.movedSince(mark) && !player.player.state.buffering) {
         _recover(_retry.nextAfterError());
       }
     });

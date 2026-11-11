@@ -28,7 +28,7 @@ class MultiTile {
 
   String? _playingUrl;
   int _failures = 0;
-  Duration _position = Duration.zero;
+  final _progress = ProgressTracker();
   bool _loadedCapped = false;
   Timer? _startTimer;
   Timer? _retryTimer;
@@ -50,7 +50,8 @@ class MultiviewController extends ChangeNotifier {
   }) : _layout = MultiLayout.byName(settings.multiviewLayout);
 
   static const unsupportedMessage = "This channel's stream format can't be played.";
-  /// Small tiles take the best HLS variant at or under this, roughly 720p.
+  /// Small tiles take the best variant at or under this, roughly 720p, or
+  /// the viewer's own cap when that is lower.
   static const tileBitrateCap = 4500000;
   static const startStagger = Duration(milliseconds: 200);
   static const rebuildEvery = 5;
@@ -252,8 +253,7 @@ class MultiviewController extends ChangeNotifier {
       player.stream.error.listen((message) => _onError(tile, message)),
       player.stream.position.listen((p) {
         // Real progress means the stream is healthy again.
-        if (p > tile._position + const Duration(seconds: 2)) {
-          tile._position = p;
+        if (tile._progress.update(p)) {
           tile._failures = 0;
           tile._errorTimer?.cancel();
         }
@@ -274,7 +274,7 @@ class MultiviewController extends ChangeNotifier {
     if (session.phase == SessionPhase.playing && url != null) {
       if (url != tile._playingUrl) {
         tile._playingUrl = url;
-        tile._position = Duration.zero;
+        tile._progress.restart();
         unawaited(_start(tile, url));
       }
     } else if (session.phase != SessionPhase.preparing) {
@@ -301,8 +301,11 @@ class MultiviewController extends ChangeNotifier {
     // The variant is chosen as the stream opens; switching afterwards makes
     // the player load it all over again.
     final capped = _tiles.length > 1 && _fullTileId != tile.id;
-    tile._loadedCapped = capped && !isDashUrl(url);
-    await player.setHlsBitrateCap(capped ? tileBitrateCap : null);
+    final chosen = settings.maxBitrate;
+    tile._loadedCapped = capped && (chosen == null || chosen > tileBitrateCap);
+    await player.setHlsBitrateCap(
+      tile._loadedCapped ? tileBitrateCap : chosen,
+    );
     await _setAudio(tile);
     if (_disposed || tile._playingUrl != url || tile.player != player) return;
     await player.play(url);
@@ -313,11 +316,13 @@ class MultiviewController extends ChangeNotifier {
 
   void _onError(MultiTile tile, String message) {
     if (tile._playingUrl == null || !isReloadableError(message)) return;
-    final mark = tile._position;
+    final mark = tile._progress.played;
     tile._errorTimer?.cancel();
     tile._errorTimer = Timer(_errorGrace, () {
       // Still loading is the stall timer's business, not an error.
-      if (tile._position == mark && !tile.player.player.state.buffering) _recover(tile);
+      if (!tile._progress.movedSince(mark) && !tile.player.player.state.buffering) {
+        _recover(tile);
+      }
     });
   }
 
