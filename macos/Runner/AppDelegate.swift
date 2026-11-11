@@ -28,19 +28,28 @@ class AppDelegate: FlutterAppDelegate {
     super.applicationDidFinishLaunching(notification)
   }
 
-  /// Closing the window hides ZipTop in the menu bar while recordings are
-  /// due; it must not quit.
+  /// Closing the last window quits, as it does on Windows and Linux. While
+  /// signed in, the shell intercepts closing (window_manager's prevent-close)
+  /// and hides the window to the menu bar instead, which isn't closing it, so
+  /// this only applies to screens such as pairing.
   override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    return false
+    return true
   }
 
-  /// Cmd+Q, Quit in the app menu, or logging out: let Dart shut down the way
-  /// closing the window does (offer to keep recording, release the streams),
-  /// then it quits through window_manager's destroy, which lands here again
-  /// with terminateAllowed set.
+  /// Cmd+Q, Quit in the app menu or Dock, logging out, or closing the last
+  /// window. Dart gets the first say: the signed-in shell shuts down the way
+  /// closing the window does (offer to keep recording, release the streams)
+  /// and quits through window_manager's destroy, which lands here again with
+  /// terminateAllowed set. If nothing in Dart takes it (pairing screen, after
+  /// signing out, or Dart not answering) ZipTop quits now, so a quit is never
+  /// swallowed.
   override func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard !terminateAllowed, let channel = channel else { return .terminateNow }
-    channel.invokeMethod("quitRequested", arguments: nil)
+    channel.invokeMethod("quitRequested", arguments: nil) { [weak self] result in
+      if (result as? Bool) == true { return }
+      self?.terminateAllowed = true
+      NSApp.terminate(nil)
+    }
     return .terminateCancel
   }
 
