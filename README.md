@@ -29,9 +29,10 @@ for why media_kit's bundled build is replaced.
 
 ### Linux
 
-Builds on Ubuntu 22.04 or newer (22.04 is what CI uses, so the AppImage runs
-on glibc 2.35 and later). Install Flutter (stable) and the packages listed in
-the *Install build dependencies* step of
+Builds on Debian 13 or newer (CI builds in a Debian 13 container, so the
+AppImage runs on glibc 2.41 and later: Debian 13, Ubuntu 25.04, Fedora 42 and
+newer). Install Flutter (stable) and the packages listed in the *Install build
+dependencies* step of
 `.github/workflows/build-installer.yml`, then:
 
 ```

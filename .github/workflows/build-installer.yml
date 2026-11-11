@@ -151,19 +151,26 @@ jobs:
   linux:
     name: Linux AppImage
     needs: version
-    # The oldest supported glibc (2.35): the AppImage runs on this and newer.
-    runs-on: ubuntu-22.04
+    # Built in Debian 13, so the AppImage needs glibc 2.41 or newer (Debian
+    # 13, Ubuntu 25.04, Fedora 42 and later). Debian's packages come from
+    # deb.debian.org rather than Ubuntu's Azure mirror, which has been
+    # stalling GitHub's Ubuntu runners (actions/runner-images#14823).
+    runs-on: ubuntu-24.04
+    container: debian:13
     timeout-minutes: 60
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
-      - name: Check out
-        uses: actions/checkout@v7
-
+      # Before checkout, which needs git for a real clone. The container runs
+      # as root, so no sudo.
       - name: Install build dependencies
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang cmake ninja-build pkg-config patchelf file \
-            libgtk-3-dev liblzma-dev libstdc++-12-dev libepoxy-dev \
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git unzip xz-utils zstd jq \
+            build-essential clang cmake ninja-build pkg-config patchelf file \
+            libgtk-3-dev liblzma-dev libepoxy-dev \
             libsecret-1-dev libayatana-appindicator3-dev libjsoncpp-dev \
             nasm python3-venv hwdata \
             libfreetype-dev libfribidi-dev libharfbuzz-dev libfontconfig-dev \
@@ -171,6 +178,12 @@ jobs:
             libegl-dev libgl-dev libx11-dev libxext-dev libxpresent-dev \
             libxrandr-dev libxss-dev libxkbcommon-dev libxv-dev \
             zlib1g-dev libssl-dev
+          # The Flutter SDK is a git checkout owned by the runner's user, not
+          # the container's root, and git refuses to work in it otherwise.
+          git config --global --add safe.directory '*'
+
+      - name: Check out
+        uses: actions/checkout@v7
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -187,7 +200,7 @@ jobs:
           path: |
             linux/third_party/libmpv
             !linux/third_party/libmpv/src
-          key: libmpv-linux-${{ hashFiles('linux/third_party/build_libmpv.sh') }}
+          key: libmpv-debian13-${{ hashFiles('linux/third_party/build_libmpv.sh') }}
 
       - name: Get packages
         run: flutter pub get
@@ -211,6 +224,16 @@ jobs:
           path: build/appimage/ZipTop-*-x86_64.AppImage
           if-no-files-found: error
           retention-days: 30
+
+      # The Flutter action's post step runs on the host, not in the container,
+      # and hashes every pubspec.lock in the workspace. Flutter's generated
+      # plugin symlinks point into the container's pub cache, which the host
+      # cannot follow, so remove them (and let the host read everything).
+      - name: Tidy the workspace for the host
+        if: always()
+        run: |
+          rm -rf linux/flutter/ephemeral
+          chmod -R a+rX .
 
   macos:
     name: macOS DMG
