@@ -8,8 +8,9 @@
 #    it in; install_libmpv.sh is run again without --optional so a missing
 #    libmpv fails the release instead of shipping media_kit's older one.
 # 4. Checks that every library the app loads is inside the bundle, signs it
-#    ad hoc (there is no Developer ID; see README.md) and packs a DMG with an
-#    Applications shortcut.
+#    and packs a DMG with an Applications shortcut. There is no Developer ID
+#    (see README.md): with MACOS_SIGN_IDENTITY set (CI does) it is signed
+#    with ZipTop's fixed self-signed certificate, otherwise ad hoc.
 #
 # The DMG lands in build/dmg/ZipTop-<version>-macos-arm64.dmg. Installed
 # copies find it by that name in GitHub Releases; see
@@ -100,9 +101,28 @@ done
 [[ $bad -eq 0 ]] || { echo "The app depends on libraries it does not ship." >&2; exit 1; }
 echo "Checked ${#machos[@]} Mach-O files: every library is in the bundle or the system."
 
-# Ad-hoc signature over the whole bundle, after every change above.
-codesign --force --deep --sign - "$app"
+# Sign the whole bundle, after every change above. With MACOS_SIGN_IDENTITY
+# (CI sets it; see tool/make_macos_signing_cert.sh) every build carries the
+# same self-signed certificate, so the login keychain knows an update as the
+# app it already allowed. Without it the signature is ad hoc: fine for a
+# local build, but tied to this exact build.
+if [[ -n "${MACOS_SIGN_IDENTITY:-}" ]]; then
+  echo "Signing with certificate $MACOS_SIGN_IDENTITY"
+  keychain=()
+  [[ -n "${MACOS_SIGN_KEYCHAIN:-}" ]] && keychain=(--keychain "$MACOS_SIGN_KEYCHAIN")
+  # (The odd expansion keeps macOS's bash 3.2 happy with an empty array.)
+  codesign --force --deep --sign "$MACOS_SIGN_IDENTITY" ${keychain[@]+"${keychain[@]}"} "$app"
+else
+  echo "Signing ad hoc (no MACOS_SIGN_IDENTITY)"
+  codesign --force --deep --sign - "$app"
+fi
 codesign --verify --deep --strict "$app"
+requirement="$(codesign -d -r- "$app" 2>&1 | grep 'designated =>' || true)"
+echo "$requirement"
+if [[ -n "${MACOS_SIGN_IDENTITY:-}" && "$requirement" != *'certificate root = H"'* ]]; then
+  echo "The signature does not name the certificate, so updates would ask for the keychain again." >&2
+  exit 1
+fi
 
 out="$root/build/dmg"
 stage="$out/stage"

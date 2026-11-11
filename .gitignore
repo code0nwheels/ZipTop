@@ -58,3 +58,7 @@ app.*.map.json
 
 # Pinned libmpv build, made by macos/third_party/build_libmpv.sh
 /macos/third_party/libmpv/
+
+# macOS signing certificate and its password (tool/make_macos_signing_cert.sh)
+*.p12
+ziptop-signing.password

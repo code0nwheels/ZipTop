@@ -91,8 +91,11 @@ blocks it the first time:
    "ZipTop was blocked…" and click **Open Anyway**, then confirm.
 
 This is needed once. Updates installed from inside ZipTop aren't blocked
-again. macOS may ask once after an update whether ZipTop may use the
-keychain item holding its pairing token. Click **Always Allow**.
+again. macOS may ask whether ZipTop may use the keychain item holding its
+pairing token. Click **Always Allow**. Release builds are all signed with the
+same self-signed certificate, so later updates don't ask again (builds from
+before that certificate was used ask once more, on the first update that
+carries it).
 
 Build-time options, passed as `--dart-define=NAME=value`:
 
@@ -173,7 +176,12 @@ tool/build_dmg.sh --version 1.3.0
 The DMG lands in `build/dmg/ZipTop-<version>-macos-arm64.dmg`. The script
 builds libmpv if needed, makes sure it is in the app's `Mpv.framework`, checks
 that nothing in the app loads a library from outside it or macOS, signs it
-ad hoc and packs the DMG. CI also loads the bundled libmpv with
+and packs the DMG. Locally it is signed ad hoc. CI signs with ZipTop's
+self-signed certificate, from the `MACOS_SIGNING_CERT_P12` (base64 .p12) and
+`MACOS_SIGNING_CERT_PASSWORD` repository secrets; a release fails without
+them. `tool/make_macos_signing_cert.sh` makes the certificate. It is made once
+and kept: a new one means every Mac asks for the keychain again. CI also
+loads the bundled libmpv with
 `tool/mpv_probe.dart` and launches the app from the DMG for 20 seconds,
 saving a screenshot with the run's artifacts.
 

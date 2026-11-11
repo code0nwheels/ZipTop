@@ -14,9 +14,10 @@ class SecureTokenStore implements TokenStore {
       : _storage = storage ??
             const FlutterSecureStorage(
               // The data protection keychain needs a keychain-access-groups
-              // entitlement and so a provisioning profile, which an ad-hoc
-              // signed build has none of. The legacy login keychain needs
-              // neither; it may ask once to allow access after an update.
+              // entitlement and so a provisioning profile, which a
+              // self-signed build has none of. The legacy login keychain
+              // needs neither. It asks once to allow access; builds signed
+              // with the same certificate are then let in without asking.
               mOptions: MacOsOptions(usesDataProtectionKeychain: false),
             );
 
