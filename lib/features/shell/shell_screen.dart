@@ -20,6 +20,7 @@ import '../../dvr/models.dart';
 import '../../player/mpv_player.dart';
 import '../../providers.dart';
 import '../../theme.dart';
+import '../../ui/typing.dart';
 import '../guide/guide_view.dart';
 import '../live/channel_panel.dart';
 import '../live/live_controller.dart';
@@ -646,8 +647,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     }
 
     // While typing in a text field only Escape is ours: it hands focus back.
-    final typing = FocusManager.instance.primaryFocus?.context?.widget is EditableText;
-    if (typing) {
+    if (isTypingInTextField()) {
       if (key == LogicalKeyboardKey.escape) {
         _focus.requestFocus();
         if (_edgePanel) setState(() => _edgePanel = false);
