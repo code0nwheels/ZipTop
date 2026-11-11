@@ -297,10 +297,30 @@ jobs:
             cat smoke/ziptop.log
             exit 1
           fi
-          kill "$pid"
+          echo "ZipTop ran for 20 s."
+          # Quit it the way the Dock or Cmd+Q does (an Apple Event, through
+          # applicationShouldTerminate), not with kill. It is on the pairing
+          # screen, where a quit was once swallowed and ZipTop had to be
+          # force quit.
+          if osascript -e 'tell application id "com.zipstreams.ziptop" to quit' > smoke/quit.log 2>&1; then
+            for _ in $(seq 20); do
+              kill -0 "$pid" 2>/dev/null || break
+              sleep 0.5
+            done
+            if kill -0 "$pid" 2>/dev/null; then
+              echo "ZipTop was asked to quit and is still running 10 s later." >&2
+              kill -9 "$pid"
+              exit 1
+            fi
+            echo "ZipTop quit when asked."
+          else
+            # The runner may not allow sending Apple Events; say so rather
+            # than fail on something that isn't ZipTop's.
+            echo "::warning::Couldn't send ZipTop a quit event: $(cat smoke/quit.log)"
+            kill "$pid"
+          fi
           wait "$pid" || true
           hdiutil detach "$RUNNER_TEMP/ziptop-dmg"
-          echo "ZipTop ran for 20 s."
 
       - name: Upload launch screenshot and log
         if: always()
