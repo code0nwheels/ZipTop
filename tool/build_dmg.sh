@@ -12,9 +12,9 @@
 #    (see README.md): with MACOS_SIGN_IDENTITY set (CI does) it is signed
 #    with ZipTop's fixed self-signed certificate, otherwise ad hoc.
 #
-# The DMG lands in build/dmg/ZipTop-<version>-macos-arm64.dmg. Installed
-# copies find it by that name in GitHub Releases; see
-# lib/features/update/update_service.dart.
+# The DMG lands in build/dmg/ZipTop-<version>-macos-arm64.dmg. CI uploads
+# it by that name to the ZipStreams server, where installed copies find it;
+# see lib/features/update/update_service.dart.
 #
 # Usage: tool/build_dmg.sh [--version 1.2.0] [--build-number 7]
 #                          [--flutter /path/to/flutter]

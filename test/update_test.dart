@@ -2,17 +2,26 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ziptop/core/api/api_client.dart';
+import 'package:ziptop/core/api/api_config.dart';
+import 'package:ziptop/core/auth/auth_events.dart';
+import 'package:ziptop/core/auth/token_store.dart';
+import 'package:ziptop/core/platform/reveal.dart' show ProcessRunner;
 import 'package:ziptop/core/platform/startup.dart';
 import 'package:ziptop/core/stores/settings_store.dart';
 import 'package:ziptop/features/update/update_service.dart';
 
+/// The server: [body] for the version check, [build] for any download.
 class OneAnswer implements HttpClientAdapter {
   OneAnswer(this.status, this.body);
   int status;
   Object? body;
+  String build = buildBytes;
+  int buildStatus = 200;
   final requests = <RequestOptions>[];
 
   @override
@@ -22,8 +31,13 @@ class OneAnswer implements HttpClientAdapter {
     Future<void>? cancelFuture,
   ) async {
     requests.add(options);
+    if (options.uri.path.startsWith('/ziptop/')) {
+      return ResponseBody.fromString(build, buildStatus, headers: {
+        Headers.contentTypeHeader: ['application/octet-stream'],
+      });
+    }
     return ResponseBody.fromString(
-      body == null ? '{"message":"Not Found"}' : jsonEncode(body),
+      body == null ? '{"error":"Not Found"}' : jsonEncode(body),
       status,
       headers: {
         Headers.contentTypeHeader: [Headers.jsonContentType],
@@ -35,27 +49,91 @@ class OneAnswer implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
-/// What GitHub's latest-release endpoint answers, trimmed to what is read.
+/// Fails every request to [host], like a server that can't be reached, and
+/// hands the rest to [inner].
+class _Unreachable implements HttpClientAdapter {
+  _Unreachable(this.host, this.inner);
+  final String host;
+  final HttpClientAdapter inner;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) {
+    if (options.uri.host == host) {
+      throw DioException.connectionError(requestOptions: options, reason: 'unreachable');
+    }
+    return inner.fetch(options, requestStream, cancelFuture);
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+/// What a download of any build answers, and its hash.
+const buildBytes = 'the new build';
+final buildSha256 = crypto.sha256.convert(utf8.encode(buildBytes)).toString();
+
+const server = 'https://a.example/';
+
+/// What the server's `api/ziptop/version` answers, trimmed to what is read.
 Map<String, Object?> release(
-  String tag, {
-  bool draft = false,
-  bool prerelease = false,
-  List<String> assets = const ['ZipTop-Setup-{v}.exe'],
+  String version, {
+  List<String> platforms = const ['windows'],
+  String? sha256,
 }) {
-  final v = tag.replaceFirst('v', '');
-  return {
-    'tag_name': tag,
-    'draft': draft,
-    'prerelease': prerelease,
-    'assets': [
-      for (final name in assets)
-        {
-          'name': name.replaceAll('{v}', v),
-          'browser_download_url':
-              'https://github.com/code0nwheels/ZipTop/releases/download/$tag/${name.replaceAll('{v}', v)}',
-        },
-    ],
+  const names = {
+    'windows': 'ZipTop-Setup-{v}.exe',
+    'linux': 'ZipTop-{v}-x86_64.AppImage',
+    'macos': 'ZipTop-{v}-macos-arm64.dmg',
   };
+  return {
+    'success': true,
+    'available': platforms.isNotEmpty,
+    'version': platforms.isEmpty ? null : version,
+    'files': {
+      for (final platform in platforms)
+        platform: {
+          'name': names[platform]!.replaceAll('{v}', version),
+          'size': buildBytes.length,
+          'sha256': sha256 ?? buildSha256,
+          'url': '/ziptop/$platform',
+        },
+    },
+  };
+}
+
+/// An update service talking to [adapter] as the server, signed in with
+/// [token] unless that is null.
+UpdateService serviceFor(
+  OneAnswer adapter,
+  SettingsStore settings, {
+  required UpdatePlatform platform,
+  String currentVersion = '1.2.0',
+  String? token = 'tok',
+  DateTime Function()? clock,
+  Map<String, String>? environment,
+  String? appBundle,
+  ProcessRunner? run,
+}) {
+  final dio = Dio()..httpClientAdapter = adapter;
+  final config = ApiConfig(primary: server, fallback: 'https://b.example/');
+  final tokens = MemoryTokenStore(token);
+  return UpdateService(
+    settings: settings,
+    currentVersion: currentVersion,
+    api: ApiClient(config: config, tokens: tokens, events: AuthEvents(), dio: dio),
+    config: config,
+    tokens: tokens,
+    http: dio,
+    clock: clock ?? DateTime.now,
+    platform: platform,
+    environment: environment,
+    appBundle: appBundle,
+    run: run ?? Process.run,
+  );
 }
 
 void main() {
@@ -84,62 +162,109 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       settings = await SettingsStore.load();
       now = DateTime(2026, 5, 1, 12);
-      adapter = OneAnswer(200, release('v1.3.0'));
-      service = UpdateService(
-        settings: settings,
-        currentVersion: '1.2.0',
-        http: Dio()..httpClientAdapter = adapter,
-        clock: () => now,
-        platform: UpdatePlatform.windows,
-      );
+      adapter = OneAnswer(200, release('1.3.0'));
+      service = serviceFor(adapter, settings, platform: UpdatePlatform.windows, clock: () => now);
     });
 
     test('Windows ignores a release that only has the AppImage', () async {
-      adapter.body = release('v1.3.0', assets: ['ZipTop-{v}-x86_64.AppImage']);
+      adapter.body = release('1.3.0', platforms: ['linux']);
       expect(await service.check(), isNull);
     });
 
-    test('offers a newer GitHub release and its installer', () async {
+    test('asks the server, signed in, and offers its installer', () async {
       final update = await service.check();
       final request = adapter.requests.single;
-      expect(request.uri.toString(), UpdateService.latestReleaseUrl);
-      expect(request.uri.host, 'api.github.com');
-      expect(request.headers['User-Agent'], 'ZipTop/1.2.0');
+      expect(request.uri.toString(), '${server}api/ziptop/version');
+      expect(request.headers['Authorization'], 'Bearer tok');
       expect(update!.version, '1.3.0');
-      expect(
-        update.downloadUrl,
-        'https://github.com/code0nwheels/ZipTop/releases/download/v1.3.0/ZipTop-Setup-1.3.0.exe',
-      );
+      expect(update.downloadUrl, '${server}ziptop/windows');
+      expect(update.sha256, buildSha256);
       expect(settings.lastUpdateCheck, now);
     });
 
-    test('picks the installer out of other assets', () async {
-      adapter.body = release('v1.3.0', assets: ['notes.txt', 'ZipTop-Setup-{v}.exe']);
-      expect((await service.check())!.downloadUrl, endsWith('/ZipTop-Setup-1.3.0.exe'));
+    test('uses the fallback host when the first cannot be reached', () async {
+      final dio = Dio()..httpClientAdapter = _Unreachable('a.example', adapter);
+      final config = ApiConfig(primary: server, fallback: 'https://b.example/');
+      final tokens = MemoryTokenStore('tok');
+      final fallback = UpdateService(
+        settings: settings,
+        currentVersion: '1.2.0',
+        api: ApiClient(config: config, tokens: tokens, events: AuthEvents(), dio: dio),
+        config: config,
+        tokens: tokens,
+        http: dio,
+        platform: UpdatePlatform.windows,
+      );
+      final update = await fallback.check();
+      expect(update!.downloadUrl, 'https://b.example/ziptop/windows');
     });
 
-    test('nothing to offer when current, older, a draft, a pre-release or missing its installer',
-        () async {
+    test('nothing to offer when current, older, unpublished, or without a usable hash', () async {
       for (final body in [
-        release('v1.2.0'),
-        release('v1.0.0'),
-        release('v9.0.0', draft: true),
-        release('v9.0.0', prerelease: true),
-        release('v9.0.0', assets: ['notes.txt']),
+        release('1.2.0'),
+        release('1.0.0'),
+        release('9.0.0', platforms: []),
+        release('9.0.0', sha256: 'not-a-hash'),
       ]) {
         adapter.body = body;
         expect(await service.check(), isNull, reason: jsonEncode(body));
       }
     });
 
-    test('no releases, or a private repository, is an error for a manual check and silence for auto',
+    test('does not ask while signed out', () async {
+      final signedOut = serviceFor(adapter, settings, platform: UpdatePlatform.windows, token: null);
+      expect(await signedOut.check(), isNull);
+      expect(adapter.requests, isEmpty);
+    });
+
+    test('a refusal or a server without downloads is an error for a manual check and silence for auto',
         () async {
-      adapter
-        ..status = 404
-        ..body = null;
-      await expectLater(service.check(), throwsStateError);
-      expect(await service.autoCheck(), isNull);
-      expect(settings.lastUpdateCheck, isNull);
+      for (final status in [404, 403, 500]) {
+        adapter
+          ..status = status
+          ..body = null;
+        await expectLater(service.check(), throwsStateError, reason: '$status');
+        expect(await service.autoCheck(), isNull);
+        expect(settings.lastUpdateCheck, isNull);
+      }
+    });
+
+    test('downloads with the token, asking for the file itself, and checks its hash', () async {
+      final file = await service.download((await service.check())!);
+      addTearDown(() => file.delete());
+      final request = adapter.requests.last;
+      expect(request.uri.toString(), '${server}ziptop/windows');
+      expect(request.headers['Authorization'], 'Bearer tok');
+      expect(request.headers['Accept'], 'application/octet-stream');
+      expect(await file.readAsString(), buildBytes);
+      expect(file.path, endsWith('ZipTop-Setup-1.3.0.exe'));
+    });
+
+    test('a download that does not match its hash is thrown away', () async {
+      final update = (await service.check())!;
+      adapter.build = 'something else';
+      await expectLater(service.download(update), throwsStateError);
+      final name = '${Directory.systemTemp.path}${Platform.pathSeparator}ZipTop-Setup-1.3.0.exe';
+      expect(await File('$name.download').exists(), isFalse);
+      expect(await File(name).exists(), isFalse);
+    });
+
+    test('a refused download is an error', () async {
+      final update = (await service.check())!;
+      adapter.buildStatus = 401;
+      await expectLater(service.download(update), throwsA(isA<DioException>()));
+    });
+
+    test('never sends the token anywhere but the ZipStreams hosts', () async {
+      // An update remembered from when releases came from GitHub.
+      const github = UpdateInfo(
+        version: '1.3.0',
+        downloadUrl: 'https://github.com/code0nwheels/ZipTop/releases/download/v1.3.0/ZipTop-Setup-1.3.0.exe',
+      );
+      adapter.build = buildBytes;
+      final file = await service.download(github);
+      addTearDown(() => file.delete());
+      expect(adapter.requests.single.headers.containsKey('Authorization'), isFalse);
     });
 
     test('automatic checks are rate limited and respect "Later"', () async {
@@ -155,7 +280,7 @@ void main() {
       expect(await service.autoCheck(), isNull, reason: 'the viewer said later');
       expect(adapter.requests, hasLength(2));
 
-      adapter.body = release('v1.4.0');
+      adapter.body = release('1.4.0');
       now = now.add(const Duration(hours: 7));
       expect((await service.autoCheck())!.version, '1.4.0');
     });
@@ -166,18 +291,19 @@ void main() {
       service.dismiss(update!);
       expect(service.available.value?.version, '1.3.0', reason: 'Later keeps the button');
 
-      UpdateService restarted({required String version}) => UpdateService(
-            settings: settings,
-            currentVersion: version,
-            http: Dio()..httpClientAdapter = adapter,
-            clock: () => now,
+      UpdateService restarted({required String version}) => serviceFor(
+            adapter,
+            settings,
             platform: UpdatePlatform.windows,
+            currentVersion: version,
+            clock: () => now,
           );
 
       final again = restarted(version: '1.2.0');
       expect(again.available.value?.version, '1.3.0');
-      expect(again.available.value?.downloadUrl, endsWith('/ZipTop-Setup-1.3.0.exe'));
-      expect(adapter.requests, hasLength(1), reason: 'restored without asking GitHub');
+      expect(again.available.value?.downloadUrl, '${server}ziptop/windows');
+      expect(again.available.value?.sha256, buildSha256, reason: 'the hash is remembered too');
+      expect(adapter.requests, hasLength(1), reason: 'restored without asking the server');
 
       final installed = restarted(version: '1.3.0');
       expect(installed.available.value, isNull);
@@ -201,7 +327,7 @@ void main() {
     test('a check that finds nothing clears the update on offer', () async {
       await service.check();
       expect(service.available.value, isNotNull);
-      adapter.body = release('v1.2.0');
+      adapter.body = release('1.2.0');
       await service.check();
       expect(service.available.value, isNull);
       expect(settings.knownUpdate, isNull);
@@ -216,21 +342,13 @@ void main() {
     late List<String> launched;
     late Future<void> Function(String) originalLauncher;
 
-    UpdateService linux(Map<String, String> environment) => UpdateService(
-          settings: settings,
-          currentVersion: '1.2.0',
-          http: Dio()..httpClientAdapter = adapter,
-          platform: UpdatePlatform.linux,
-          environment: environment,
-        );
+    UpdateService linux(Map<String, String> environment) =>
+        serviceFor(adapter, settings, platform: UpdatePlatform.linux, environment: environment);
 
     setUp(() async {
       SharedPreferences.setMockInitialValues({});
       settings = await SettingsStore.load();
-      adapter = OneAnswer(
-        200,
-        release('v1.3.0', assets: ['ZipTop-Setup-{v}.exe', 'ZipTop-{v}-x86_64.AppImage']),
-      );
+      adapter = OneAnswer(200, release('1.3.0', platforms: ['windows', 'linux']));
       dir = await Directory.systemTemp.createTemp('ziptop_update_test');
       appImage = '${dir.path}${Platform.pathSeparator}ZipTop.AppImage';
       await File(appImage).writeAsString('old');
@@ -246,10 +364,7 @@ void main() {
 
     test('picks the AppImage and ignores the installer', () async {
       final update = await linux({'APPIMAGE': appImage}).check();
-      expect(
-        update!.downloadUrl,
-        'https://github.com/code0nwheels/ZipTop/releases/download/v1.3.0/ZipTop-1.3.0-x86_64.AppImage',
-      );
+      expect(update!.downloadUrl, '${server}ziptop/linux');
     });
 
     test('nothing to offer when not run as an AppImage, or when its folder is missing', () async {
@@ -262,7 +377,7 @@ void main() {
     });
 
     test('nothing to offer when the release has only the installer', () async {
-      adapter.body = release('v1.3.0');
+      adapter.body = release('1.3.0');
       expect(await linux({'APPIMAGE': appImage}).check(), isNull);
     });
 
@@ -330,10 +445,9 @@ void main() {
       String? appBundle,
       Future<ProcessResult> Function(String, List<String>)? run,
     }) =>
-        UpdateService(
-          settings: settings,
-          currentVersion: '1.2.0',
-          http: Dio()..httpClientAdapter = adapter,
+        serviceFor(
+          adapter,
+          settings,
           platform: UpdatePlatform.macos,
           appBundle: appBundle ?? bundle,
           run: run ?? fakeRunner(),
@@ -348,15 +462,7 @@ void main() {
     setUp(() async {
       SharedPreferences.setMockInitialValues({});
       settings = await SettingsStore.load();
-      adapter = OneAnswer(
-        200,
-        release('v1.3.0', assets: [
-          'ZipTop-Setup-{v}.exe',
-          'ZipTop-{v}-x86_64.AppImage',
-          'ZipTop-{v}-macos-x86_64.dmg',
-          'ZipTop-{v}-macos-arm64.dmg',
-        ]),
-      );
+      adapter = OneAnswer(200, release('1.3.0', platforms: ['windows', 'linux', 'macos']));
       applications = await Directory.systemTemp.createTemp('ziptop_update_mac_test');
       bundle = join(applications.path, 'ZipTop.app');
       staged = join(applications.path, '.ZipTop-update.app');
@@ -374,16 +480,13 @@ void main() {
       await applications.delete(recursive: true);
     });
 
-    test('picks the Apple Silicon disk image and ignores the other builds', () async {
+    test('picks the disk image and ignores the other builds', () async {
       final update = await mac().check();
-      expect(
-        update!.downloadUrl,
-        'https://github.com/code0nwheels/ZipTop/releases/download/v1.3.0/ZipTop-1.3.0-macos-arm64.dmg',
-      );
+      expect(update!.downloadUrl, '${server}ziptop/macos');
     });
 
     test('nothing to offer when the release has no disk image', () async {
-      adapter.body = release('v1.3.0', assets: ['ZipTop-Setup-{v}.exe', 'ZipTop-{v}-x86_64.AppImage']);
+      adapter.body = release('1.3.0', platforms: ['windows', 'linux']);
       expect(await mac().check(), isNull);
     });
 

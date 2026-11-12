@@ -8,8 +8,8 @@
 #    and packs it with a pinned appimagetool and AppImage runtime.
 #
 # The AppImage lands in build/appimage/ZipTop-<version>-x86_64.AppImage.
-# Installed copies find it by that name in GitHub Releases; see
-# lib/features/update/update_service.dart.
+# CI uploads it by that name to the ZipStreams server, where installed
+# copies find it; see lib/features/update/update_service.dart.
 #
 # Usage: tool/build_appimage.sh [--version 1.2.0] [--build-number 7]
 #                               [--flutter /path/to/flutter]

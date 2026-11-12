@@ -113,7 +113,6 @@ Build-time options, passed as `--dart-define=NAME=value`:
 | `BASE_URL` | `https://al.zipstreams.live/` | Primary API host |
 | `FALLBACK_URL` | `https://al.zipstreams.net/` | Used when the primary can't be reached |
 | `MEDIA_USER_AGENT` | `ZipStreams-AndroidTV/2.0` | Sent on stream requests |
-| `UPDATE_REPO` | `code0nwheels/ZipTop` | GitHub repository whose releases are offered as updates |
 
 Debug builds also read two environment variables, for testing from scripts:
 `ZIPTOP_START_VIEW=guide|multiview|recordings` and `ZIPTOP_DEBUG_RECORD=<seconds>`.
@@ -135,7 +134,10 @@ Versions come from git tags, not from `pubspec.yaml`.
   It builds that version and publishes GitHub Release `v1.2.4` with
   `ZipTop-Setup-1.2.4.exe`, `ZipTop-1.2.4-x86_64.AppImage`,
   `ZipTop-1.2.4-macos-arm64.dmg` and notes generated from the merged pull
-  requests. Publishing creates the tag.
+  requests. Publishing creates the tag. A separate job then uploads the
+  three builds to the ZipStreams server (`tool/upload_to_webapp.sh`, with
+  the `ZIPSTREAMS_URL` and `ZIPSTREAMS_UPLOAD_TOKEN` repository secrets);
+  that is where installed copies find updates.
   Builds run one at a time and are never cancelled. If several merges land
   while one is building, only the newest waits, and its release includes
   the others.
@@ -196,10 +198,14 @@ saving a screenshot with the run's artifacts.
 
 ### Updates
 
-Installed copies ask GitHub for the latest release
-(`api.github.com/repos/<UPDATE_REPO>/releases/latest`) at start-up, at most
-every six hours, and from Settings. When its tag is newer than the running
-version and it has this platform's asset, ZipTop offers it. On Windows it
+Installed copies ask the ZipStreams server which release is published
+(`GET api/ziptop/version` on the API host, with the pairing token) at
+start-up, at most every six hours, and from Settings. Only a signed-in
+copy asks: the server serves releases to signed-in viewers only. When the
+published version is newer than the running one and has this platform's
+build, ZipTop offers it. The build is downloaded from the same host with
+the same token and checked against the SHA-256 the server gave; a
+mismatch is thrown away. On Windows it
 downloads `ZipTop-Setup-*.exe` and runs it silently (`/VERYSILENT`, no
 wizard), which closes ZipTop, installs over it and starts it again. On Linux it downloads
 `ZipTop-*-x86_64.AppImage` next to the running AppImage, renames it over it
@@ -208,11 +214,11 @@ can't write to, is not offered updates. On macOS it downloads
 `ZipTop-*-macos-arm64.dmg`, copies the app out of it beside the running
 one, swaps the two and restarts. A copy run from the DMG itself, one macOS
 has not let out of quarantine yet, or one in a folder it can't write to,
-is not offered updates. Drafts and pre-releases are skipped; a
-test build is offered the release it leads up to.
+is not offered updates. The server only ever holds releases, never test
+builds; a test build is offered the release it leads up to.
 
-GitHub only answers this without a sign-in for **public** repositories. While
-the repository is private, update checks find nothing.
+Copies older than this change still ask GitHub's latest release, which CI
+keeps publishing, so they update onto a version that asks the server.
 
 ## Where things are kept
 
