@@ -73,6 +73,9 @@ final updateServiceProvider = Provider<UpdateService>((ref) {
   final service = UpdateService(
     settings: ref.watch(settingsStoreProvider),
     currentVersion: ref.watch(appVersionProvider),
+    api: ref.watch(apiClientProvider),
+    config: ref.watch(apiConfigProvider),
+    tokens: ref.watch(tokenStoreProvider),
   );
   ref.onDispose(service.available.dispose);
   return service;

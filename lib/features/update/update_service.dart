@@ -1,20 +1,28 @@
 import 'dart:io';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import '../../core/api/api_client.dart';
+import '../../core/api/api_config.dart';
+import '../../core/auth/token_store.dart';
 import '../../core/models/json.dart';
 import '../../core/platform/reveal.dart' show ProcessRunner;
 import '../../core/stores/settings_store.dart';
 
 /// A newer ZipTop on offer.
 class UpdateInfo {
-  const UpdateInfo({required this.version, required this.downloadUrl});
+  const UpdateInfo({required this.version, required this.downloadUrl, this.sha256});
   final String version;
 
   /// Absolute URL of the installer, AppImage or disk image for this platform.
   final String downloadUrl;
+
+  /// The build's SHA-256 as lowercase hex, checked after downloading. Null
+  /// only for an update remembered from before the server gave one.
+  final String? sha256;
 }
 
 typedef _Parsed = ({List<int> core, bool preRelease});
@@ -46,14 +54,17 @@ bool isNewerVersion(String remote, String local) {
 /// The platforms the updater knows how to update.
 enum UpdatePlatform { windows, linux, macos }
 
-/// Checks GitHub for a newer published release, downloads this platform's
-/// build and hands over to it.
+/// Asks the ZipStreams server for the published release, downloads this
+/// platform's build and hands over to it.
 ///
-/// Releases are made by CI: each one is tagged `v<version>` and carries
-/// `ZipTop-Setup-<version>.exe` for Windows,
+/// Releases are made by CI, which publishes each one to GitHub and uploads
+/// its builds to the server: `ZipTop-Setup-<version>.exe` for Windows,
 /// `ZipTop-<version>-x86_64.AppImage` for Linux and
 /// `ZipTop-<version>-macos-arm64.dmg` (holding `ZipTop.app`) for Apple
-/// Silicon Macs. Drafts and pre-releases are never offered.
+/// Silicon Macs. The server only takes releases, never test builds, and only
+/// answers a signed-in viewer: `GET api/ziptop/version` gives the version and,
+/// per platform, the download path and its SHA-256. The download is made
+/// with the same token and is thrown away if its hash doesn't match.
 ///
 /// On Windows the installer is downloaded to the temp folder and run silently,
 /// with no wizard. On
@@ -70,6 +81,9 @@ class UpdateService {
   UpdateService({
     required this.settings,
     required this.currentVersion,
+    required this.api,
+    required this.config,
+    required this.tokens,
     Dio? http,
     this.clock = DateTime.now,
     UpdatePlatform? platform,
@@ -82,7 +96,8 @@ class UpdateService {
         _appBundleOverride = appBundle {
     final known = settings.knownUpdate;
     if (known != null && isNewerVersion(known.version, currentVersion)) {
-      available.value = UpdateInfo(version: known.version, downloadUrl: known.url);
+      available.value =
+          UpdateInfo(version: known.version, downloadUrl: known.url, sha256: known.sha256);
     } else if (known != null) {
       // Installed since; nothing left to offer.
       settings.knownUpdate = null;
@@ -101,21 +116,14 @@ class UpdateService {
     return null;
   }
 
-  /// The GitHub repository whose releases are offered.
-  static const repository = String.fromEnvironment(
-    'UPDATE_REPO',
-    defaultValue: 'code0nwheels/ZipTop',
-  );
+  /// Where the server says which release is published (relative to the
+  /// API host, like every other call).
+  static const versionPath = 'api/ziptop/version';
 
-  static const latestReleaseUrl = 'https://api.github.com/repos/$repository/releases/latest';
-
-  /// Automatic checks happen at most this often (GitHub allows 60 anonymous
-  /// requests an hour per address).
+  /// Automatic checks happen at most this often.
   static const autoCheckInterval = Duration(hours: 6);
 
-  static final _installerName = RegExp(r'^ZipTop-Setup-.*\.exe$', caseSensitive: false);
-  static final _appImageName = RegExp(r'^ZipTop-.*-x86_64\.AppImage$', caseSensitive: false);
-  static final _diskImageName = RegExp(r'^ZipTop-.*-macos-arm64\.dmg$', caseSensitive: false);
+  static final _sha256Pattern = RegExp(r'^[0-9a-f]{64}$');
 
   /// Beside the running bundle on macOS: where the new one is copied, and
   /// what the running one is renamed to until the hand-over script removes it.
@@ -124,6 +132,17 @@ class UpdateService {
 
   final SettingsStore settings;
   final String currentVersion;
+
+  /// Asks the server (tries each host, adds the token).
+  final ApiClient api;
+
+  /// Turns the server's download path into a URL on the host that answered.
+  final ApiConfig config;
+
+  /// The pairing token, sent with the download.
+  final TokenStore tokens;
+
+  /// Downloads the build.
   final Dio _http;
   final DateTime Function() clock;
 
@@ -148,13 +167,6 @@ class UpdateService {
     final path = environment['APPIMAGE'];
     return path == null || path.isEmpty ? null : path;
   }
-
-  RegExp? get _assetName => switch (platform) {
-        UpdatePlatform.windows => _installerName,
-        UpdatePlatform.linux => _appImageName,
-        UpdatePlatform.macos => _diskImageName,
-        null => null,
-      };
 
   /// Whether this copy can replace itself: always on Windows (the installer
   /// does it); on Linux only as an AppImage whose folder can be written to;
@@ -193,69 +205,65 @@ class UpdateService {
     }
   }
 
-  /// Asks GitHub. Returns the update on offer, or null when this build is
-  /// current or can't update itself (an unsupported platform, or a Linux
-  /// build not run as an AppImage in a writable folder, or a Mac build not
-  /// installed in a writable folder). Throws when there is
-  /// no usable answer, including when the repository is private or has no
-  /// releases yet.
+  /// Asks the server. Returns the update on offer, or null when this build
+  /// is current, nothing is published for this platform, ZipTop isn't
+  /// signed in, or this copy can't update itself (an unsupported platform, a
+  /// Linux build not run as an AppImage in a writable folder, or a Mac build
+  /// not installed in a writable folder). Throws when there is no usable
+  /// answer: the server can't be reached, or refuses (an expired
+  /// subscription, a server without release downloads yet).
   Future<UpdateInfo?> check() async {
     final update = await _fetch();
     available.value = update;
-    settings.knownUpdate =
-        update == null ? null : (version: update.version, url: update.downloadUrl);
+    settings.knownUpdate = update == null
+        ? null
+        : (version: update.version, url: update.downloadUrl, sha256: update.sha256);
     return update;
   }
 
   Future<UpdateInfo?> _fetch() async {
-    final assetName = _assetName;
-    if (assetName == null || !await _canUpdate()) return null;
+    final key = platform?.name;
+    if (key == null || !await _canUpdate()) return null;
+    // The server only answers a signed-in viewer, and asking without a token
+    // would only report the viewer as signed out.
+    if (await tokens.read() == null) return null;
 
     final Response<dynamic> res;
     try {
-      res = await _http.get<dynamic>(
-        latestReleaseUrl,
-        options: Options(
-          headers: {
-            'Accept': 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28',
-            // GitHub rejects API requests without one.
-            'User-Agent': 'ZipTop/$currentVersion',
-          },
-          validateStatus: (_) => true,
-          responseType: ResponseType.json,
-        ),
-      );
-    } on DioException catch (e) {
-      throw StateError("Can't reach GitHub: ${e.message}");
+      res = await api.get(versionPath);
+    } on Exception catch (e) {
+      throw StateError("Can't reach ZipStreams: $e");
     }
-    final json = asJson(res.data);
-    final tag = asString(json?['tag_name']);
-    if (res.statusCode != 200 || json == null || tag == null) {
+    final json = res.json;
+    if (!res.ok || json == null || asBool(json['success']) == false) {
       throw StateError('No release information available (${res.statusCode})');
     }
     settings.lastUpdateCheck = clock();
-    if (asBool(json['draft']) == true || asBool(json['prerelease']) == true) return null;
+    if (asBool(json['available']) != true) return null;
 
-    final version = tag.replaceFirst(RegExp(r'^[vV]'), '');
-    if (!isNewerVersion(version, currentVersion)) return null;
+    final version = asString(json['version']);
+    if (version == null || !isNewerVersion(version, currentVersion)) return null;
 
-    String? url;
-    final assets = json['assets'];
-    if (assets is List) {
-      for (final asset in assets) {
-        final a = asJson(asset);
-        final name = asString(a?['name']);
-        if (name != null && assetName.hasMatch(name)) {
-          url = asString(a?['browser_download_url']);
-          break;
-        }
-      }
+    // A release without this platform's build, or with no usable hash.
+    final file = asJson(asJson(json['files'])?[key]);
+    final path = asString(file?['url']);
+    final sha256 = asString(file?['sha256'])?.toLowerCase();
+    if (path == null || path.isEmpty || sha256 == null || !_sha256Pattern.hasMatch(sha256)) {
+      return null;
     }
-    // A release without this platform's build (still uploading, or made by
-    // hand).
-    if (url == null || url.isEmpty) return null;
-    return UpdateInfo(version: version, downloadUrl: url);
+    return UpdateInfo(
+      version: version,
+      downloadUrl: config.resolveDownloadUrl(path),
+      sha256: sha256,
+    );
+  }
+
+  /// Whether [url] is on one of the ZipStreams hosts, the only places the
+  /// pairing token may be sent.
+  bool _isServerUrl(String url) {
+    final host = Uri.tryParse(url)?.host;
+    if (host == null || host.isEmpty) return false;
+    return config.candidates.any((base) => Uri.parse(base).host == host);
   }
 
   /// The check made by itself after start-up: at most every six hours, never
@@ -297,14 +305,29 @@ class UpdateService {
         throw UnsupportedError('Updates are not supported on this platform');
     }
     final partial = File('${target.path}.download');
+    final token = _isServerUrl(update.downloadUrl) ? await tokens.read() : null;
     await _http.download(
       update.downloadUrl,
       partial.path,
       cancelToken: cancel,
-      options: Options(headers: {'User-Agent': 'ZipTop/$currentVersion'}),
+      options: Options(headers: {
+        'User-Agent': 'ZipTop/$currentVersion',
+        // The file itself: a refusal then comes back as an error, not as a
+        // sign-in page saved in place of the build.
+        'Accept': 'application/octet-stream',
+        if (token != null) 'Authorization': 'Bearer $token',
+      }),
       onReceiveProgress: (received, total) =>
           onProgress?.call(total > 0 ? received / total : null),
     );
+    final expected = update.sha256;
+    if (expected != null) {
+      final actual = (await crypto.sha256.bind(partial.openRead()).first).toString();
+      if (actual != expected.toLowerCase()) {
+        await partial.delete();
+        throw StateError("The update didn't download correctly. Try again.");
+      }
+    }
     if (await target.exists()) await target.delete();
     return partial.rename(target.path);
   }

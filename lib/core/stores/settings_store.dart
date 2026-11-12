@@ -25,6 +25,7 @@ class SettingsStore extends ChangeNotifier {
   static const _dismissedUpdateKey = 'update_dismissed_version';
   static const _knownUpdateVersionKey = 'update_known_version';
   static const _knownUpdateUrlKey = 'update_known_url';
+  static const _knownUpdateSha256Key = 'update_known_sha256';
   static const _miniPlayerBoundsKey = 'mini_player_bounds';
   static const _windowBoundsKey = 'window_bounds';
   static const _windowMaximizedKey = 'window_maximized';
@@ -153,21 +154,29 @@ class SettingsStore extends ChangeNotifier {
   }
 
   /// The newer release the last check found, so the update button survives
-  /// a restart between checks.
-  ({String version, String url})? get knownUpdate {
+  /// a restart between checks. [sha256] is null for one found before the
+  /// server gave hashes (a GitHub release).
+  ({String version, String url, String? sha256})? get knownUpdate {
     final version = _prefs.getString(_knownUpdateVersionKey);
     final url = _prefs.getString(_knownUpdateUrlKey);
     if (version == null || url == null || url.isEmpty) return null;
-    return (version: version, url: url);
+    return (version: version, url: url, sha256: _prefs.getString(_knownUpdateSha256Key));
   }
 
-  set knownUpdate(({String version, String url})? value) {
+  set knownUpdate(({String version, String url, String? sha256})? value) {
     if (value == null) {
       _prefs.remove(_knownUpdateVersionKey);
       _prefs.remove(_knownUpdateUrlKey);
+      _prefs.remove(_knownUpdateSha256Key);
     } else {
       _prefs.setString(_knownUpdateVersionKey, value.version);
       _prefs.setString(_knownUpdateUrlKey, value.url);
+      final sha256 = value.sha256;
+      if (sha256 == null) {
+        _prefs.remove(_knownUpdateSha256Key);
+      } else {
+        _prefs.setString(_knownUpdateSha256Key, sha256);
+      }
     }
   }
 
