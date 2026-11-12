@@ -7,7 +7,16 @@
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
 
-FlutterWindow::~FlutterWindow() {}
+FlutterWindow::~FlutterWindow() {
+  // windowManager.destroy() only posts WM_QUIT, so the top-level window is
+  // still alive when this runs. Tearing the controller down destroys the
+  // Flutter child window, which sends WM_PARENTNOTIFY back to
+  // MessageHandler. Assigning nullptr clears the pointer before the
+  // controller is deleted, so that message no longer reaches a controller
+  // that is halfway through destruction (letting the member's destructor do
+  // it would leave the pointer set and crash in FlutterWindowsView).
+  flutter_controller_ = nullptr;
+}
 
 bool FlutterWindow::OnCreate() {
   if (!Win32Window::OnCreate()) {
@@ -68,7 +77,9 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
 
   switch (message) {
     case WM_FONTCHANGE:
-      flutter_controller_->engine()->ReloadSystemFonts();
+      if (flutter_controller_) {
+        flutter_controller_->engine()->ReloadSystemFonts();
+      }
       break;
   }
 
