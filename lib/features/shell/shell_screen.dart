@@ -5,13 +5,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:screen_retriever/screen_retriever.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../core/models/catalog.dart';
 import '../../core/platform/app_channel.dart';
 import '../../core/platform/tray.dart';
+import '../../core/platform/window_placement.dart';
 import '../../core/session/playback_session.dart';
 import '../../core/stores/catalog_store.dart';
 import '../../core/stores/guide_repository.dart';
@@ -58,11 +58,9 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   static const _channelsWidth = 350.0;
   static const _controlsLinger = Duration(seconds: 3);
 
-  /// Must match the WindowOptions in main.dart.
-  static const _minimumWindowSize = Size(900, 560);
-
   late final CatalogStore _catalog;
   late final SettingsStore _settings;
+  late final WindowPlacement _placement;
   late final GuideRepository _guide;
   late final PlaybackSession _session;
   late final LivePlayer _player;
@@ -111,6 +109,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     super.initState();
     _catalog = ref.read(catalogStoreProvider);
     _settings = ref.read(settingsStoreProvider);
+    _placement = ref.read(windowPlacementProvider);
     _guide = ref.read(guideRepositoryProvider);
     final slots = ref.read(streamSlotsProvider);
     _dvr = ref.read(dvrServiceProvider);
@@ -249,6 +248,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     if (_closing) return;
     _closing = true;
     if (_mini) _settings.miniPlayerBounds = await windowManager.getBounds();
+    await _placement.flush();
     await windowManager.hide();
     try {
       await _cast.stop(resumeHere: false).timeout(const Duration(seconds: 3));
@@ -308,7 +308,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       // No tray icon: bring the window back rather than leave no way in.
       _inTray = false;
       if (Platform.isMacOS) await windowManager.setSkipTaskbar(false);
-      await windowManager.show();
+      await _placement.show();
       return;
     }
     await _leaveForBackground();
@@ -334,7 +334,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       await trayManager.destroy();
     } catch (_) {}
     if (Platform.isMacOS) await windowManager.setSkipTaskbar(false);
-    await windowManager.show();
+    await _placement.show();
     await windowManager.focus();
     await _resumeFromBackground();
   }
@@ -350,6 +350,9 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
   void _restoreFromMinimized() {
     if (!_minimizedNoTray) return;
     _minimizedNoTray = false;
+    // Started at sign-in on a desktop with no tray: maximize it now if it
+    // was maximized last time.
+    unawaited(_placement.show());
     unawaited(_resumeFromBackground());
   }
 
@@ -444,13 +447,15 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     if (_view == _View.guide || (_view == _View.recordings && _playing == null)) {
       _showView(_View.live);
     }
+    // The mini player's place is kept apart from the full window's.
+    _placement.suspended = true;
     _maximizedBeforeMini = await windowManager.isMaximized();
     if (_maximizedBeforeMini) await _unmaximize();
     final bounds = await windowManager.getBounds();
     _boundsBeforeMini = bounds;
     final mini = placeMiniPlayer(
       saved: _settings.miniPlayerBounds,
-      workAreas: await _workAreas(),
+      workAreas: await displayWorkAreas(),
       window: bounds,
     );
     // Show only the player before the window shrinks around it.
@@ -474,26 +479,14 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     // that below zero; zero there would keep a 0:1 ratio hint.
     await windowManager.setAspectRatio(-1);
     await windowManager.setTitleBarStyle(TitleBarStyle.normal);
-    await windowManager.setMinimumSize(_minimumWindowSize);
+    await windowManager.setMinimumSize(minimumWindowSize);
     final before = _boundsBeforeMini;
     if (before != null) await windowManager.setBounds(before);
     if (_maximizedBeforeMini) await windowManager.maximize();
     _boundsBeforeMini = null;
     _maximizedBeforeMini = false;
+    _placement.suspended = false;
     if (mounted) setState(() => _mini = false);
-  }
-
-  /// Each display's area minus its taskbar or dock, or none if they can't be
-  /// listed.
-  Future<List<Rect>> _workAreas() async {
-    try {
-      return [
-        for (final display in await screenRetriever.getAllDisplays())
-          (display.visiblePosition ?? Offset.zero) & (display.visibleSize ?? display.size),
-      ];
-    } catch (_) {
-      return const [];
-    }
   }
 
   /// Shows the video controls and restarts their hide timer.

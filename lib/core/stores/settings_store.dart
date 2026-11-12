@@ -26,6 +26,8 @@ class SettingsStore extends ChangeNotifier {
   static const _knownUpdateVersionKey = 'update_known_version';
   static const _knownUpdateUrlKey = 'update_known_url';
   static const _miniPlayerBoundsKey = 'mini_player_bounds';
+  static const _windowBoundsKey = 'window_bounds';
+  static const _windowMaximizedKey = 'window_maximized';
 
   final SharedPreferences _prefs;
 
@@ -171,8 +173,20 @@ class SettingsStore extends ChangeNotifier {
 
   /// Where the pop-out mini player last sat (x, y, width, height in logical
   /// pixels), or null to use the default corner.
-  Rect? get miniPlayerBounds {
-    final raw = _prefs.getString(_miniPlayerBoundsKey);
+  Rect? get miniPlayerBounds => _rect(_miniPlayerBoundsKey);
+  set miniPlayerBounds(Rect? value) => _setRect(_miniPlayerBoundsKey, value);
+
+  /// Where the main window last sat when neither maximized nor full screen
+  /// (logical pixels), or null to centre it at the default size.
+  Rect? get windowBounds => _rect(_windowBoundsKey);
+  set windowBounds(Rect? value) => _setRect(_windowBoundsKey, value);
+
+  /// Whether the main window was maximized when last left.
+  bool get windowMaximized => _prefs.getBool(_windowMaximizedKey) ?? false;
+  set windowMaximized(bool value) => _prefs.setBool(_windowMaximizedKey, value);
+
+  Rect? _rect(String key) {
+    final raw = _prefs.getString(key);
     if (raw == null) return null;
     try {
       final decoded = jsonDecode(raw);
@@ -186,14 +200,11 @@ class SettingsStore extends ChangeNotifier {
     return null;
   }
 
-  set miniPlayerBounds(Rect? value) {
+  void _setRect(String key, Rect? value) {
     if (value == null) {
-      _prefs.remove(_miniPlayerBoundsKey);
+      _prefs.remove(key);
     } else {
-      _prefs.setString(
-        _miniPlayerBoundsKey,
-        jsonEncode([value.left, value.top, value.width, value.height]),
-      );
+      _prefs.setString(key, jsonEncode([value.left, value.top, value.width, value.height]));
     }
   }
 

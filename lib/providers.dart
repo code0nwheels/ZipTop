@@ -8,6 +8,7 @@ import 'core/api/streams_v2_api.dart';
 import 'core/auth/auth_events.dart';
 import 'core/auth/token_store.dart';
 import 'core/platform/startup.dart';
+import 'core/platform/window_placement.dart';
 import 'core/session/playback_session.dart';
 import 'core/stores/catalog_store.dart';
 import 'core/stores/guide_repository.dart';
@@ -56,6 +57,11 @@ final guideRepositoryProvider = Provider<GuideRepository>((ref) {
 
 /// True when ZipTop was started with `--minimized` (start at sign-in).
 final startHiddenProvider = Provider<bool>((ref) => false);
+
+/// Remembers the main window's place; set up in main() before the window shows.
+final windowPlacementProvider = Provider<WindowPlacement>(
+  (ref) => throw UnimplementedError('windowPlacementProvider is overridden in main()'),
+);
 
 /// This build's version, read before the app starts.
 final appVersionProvider = Provider<String>((ref) => '0.0.0');
