@@ -11,6 +11,7 @@ import 'package:window_manager/window_manager.dart';
 import 'app.dart';
 import 'core/platform/app_channel.dart';
 import 'core/platform/startup.dart';
+import 'core/platform/window_placement.dart';
 import 'core/stores/settings_store.dart';
 import 'dvr/dvr_store.dart';
 import 'providers.dart';
@@ -28,14 +29,18 @@ Future<void> main(List<String> args) async {
   final dvrStore = await DvrStore.open(File(p.join(support.path, 'dvr.json')));
   final package = await PackageInfo.fromPlatform();
 
-  const options = WindowOptions(
-    size: Size(1280, 760),
-    minimumSize: Size(900, 560),
-    center: true,
+  final placement = WindowPlacement(settings);
+  final bounds = restoreWindowBounds(settings.windowBounds, await displayWorkAreas());
+  final options = WindowOptions(
+    size: bounds?.size ?? defaultWindowSize,
+    minimumSize: minimumWindowSize,
+    center: bounds == null,
     title: 'ZipTop',
     backgroundColor: ZipColors.background,
   );
   await windowManager.waitUntilReadyToShow(options, () async {
+    // Back where it was last time, maximized if it was.
+    await placement.restore(bounds: bounds, show: !startHidden);
     // Started at sign-in: stay hidden until opened from the tray.
     if (startHidden) return;
     await windowManager.show();
@@ -48,6 +53,7 @@ Future<void> main(List<String> args) async {
         settingsStoreProvider.overrideWithValue(settings),
         dvrStoreProvider.overrideWithValue(dvrStore),
         startHiddenProvider.overrideWithValue(startHidden),
+        windowPlacementProvider.overrideWithValue(placement),
         appVersionProvider.overrideWithValue(package.version),
       ],
       child: const ZipTopApp(),
