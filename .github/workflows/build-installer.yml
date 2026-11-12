@@ -5,7 +5,11 @@ name: Build and release
 #   is labelled release:minor or release:major. The Windows installer, the
 #   Linux AppImage and the macOS DMG are published as GitHub Release v1.2.4,
 #   which also creates the tag. Installed copies of ZipTop offer it as an
-#   update.
+#   update. The same three files are then uploaded to the ZipStreams web app
+#   (tool/upload_to_webapp.sh) for signed-in users to download; that runs
+#   as its own job, so a web app failure never holds up the GitHub Release
+#   and can be re-run alone. It is skipped with a warning while the
+#   ZIPSTREAMS_URL or ZIPSTREAMS_UPLOAD_TOKEN secret is unset.
 # - A pull request labelled release:skip (docs, CI) only makes test builds,
 #   versioned as the next patch with -dev.<run> (e.g. 1.2.4-dev.57) and
 #   attached to the run.
@@ -448,3 +452,30 @@ jobs:
             --title "ZipTop $VERSION" \
             --target "$GITHUB_SHA" \
             --generate-notes
+
+  webapp:
+    name: Upload to the web app
+    needs: [version, release]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Download builds
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Upload and publish
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          ZIPSTREAMS_URL: ${{ secrets.ZIPSTREAMS_URL }}
+          ZIPSTREAMS_UPLOAD_TOKEN: ${{ secrets.ZIPSTREAMS_UPLOAD_TOKEN }}
+        run: |
+          if [ -z "$ZIPSTREAMS_URL" ] || [ -z "$ZIPSTREAMS_UPLOAD_TOKEN" ]; then
+            echo "::warning::ZIPSTREAMS_URL or ZIPSTREAMS_UPLOAD_TOKEN is not set; not uploading to the web app."
+            exit 0
+          fi
+          bash tool/upload_to_webapp.sh "$VERSION" dist
