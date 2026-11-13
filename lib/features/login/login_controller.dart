@@ -4,17 +4,24 @@ import 'package:flutter/foundation.dart';
 
 import '../../core/api/api_config.dart';
 import '../../core/api/auth_api.dart';
+import '../../core/auth/device_description.dart';
 import '../../core/auth/token_store.dart';
+import '../../core/platform/browser.dart';
 
-/// Device-code pairing: show a code, poll until it is activated on the web,
+/// Device-code pairing: get a code, poll until it is approved on the web,
 /// then keep the token. A code that expires is replaced automatically.
+///
+/// The code is approved in the browser on this computer: [openBrowser]
+/// opens the approval page with the code filled in.
 class LoginController extends ChangeNotifier {
   LoginController({
     required this.api,
     required this.config,
     required this.tokens,
     required this.onPaired,
-  });
+    this.device,
+    Future<bool> Function(String url)? browser,
+  }) : _browser = browser ?? openInBrowser;
 
   static const pollInterval = Duration(milliseconds: 2500);
 
@@ -22,6 +29,11 @@ class LoginController extends ChangeNotifier {
   final ApiConfig config;
   final TokenStore tokens;
   final VoidCallback onPaired;
+
+  /// Sent with each code request, so the approval page can say what is
+  /// asking to be signed in.
+  final DeviceDescription? device;
+  final Future<bool> Function(String url) _browser;
 
   String? _code;
   String? _linkUrl;
@@ -32,20 +44,37 @@ class LoginController extends ChangeNotifier {
   Timer? _restartTimer;
   bool _polling = false;
   bool _disposed = false;
+  bool _browserOpened = false;
 
   String? get code => _code;
 
-  /// What the QR code encodes.
+  /// The approval page for the current code.
   String? get linkUrl => _linkUrl;
   int get expiresIn => _expiresIn;
   String? get error => _error;
 
+  /// True once the approval page was opened in the browser here, until the
+  /// code is replaced.
+  bool get browserOpened => _browserOpened;
+
+  /// Opens the approval page for the current code in the default browser.
+  Future<void> openBrowser() async {
+    final link = _linkUrl;
+    if (link == null) return;
+    final opened = await _browser(link);
+    if (_disposed || link != _linkUrl) return;
+    _browserOpened = opened;
+    _error = opened ? null : "Couldn't open your browser. Copy the link and paste it into your browser.";
+    _notify();
+  }
+
   Future<void> start() async {
     _cancel();
     _error = null;
+    _browserOpened = false;
     _notify();
     try {
-      final pairing = await api.generateCode();
+      final pairing = await api.generateCode(device: device);
       if (_disposed) return;
       _code = pairing.code;
       _linkUrl = config.linkUrl(pairing.code);

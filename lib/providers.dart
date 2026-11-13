@@ -6,6 +6,7 @@ import 'core/api/auth_api.dart';
 import 'core/api/streams_api.dart';
 import 'core/api/streams_v2_api.dart';
 import 'core/auth/auth_events.dart';
+import 'core/auth/device_description.dart';
 import 'core/auth/token_store.dart';
 import 'core/platform/startup.dart';
 import 'core/platform/window_placement.dart';
@@ -65,6 +66,11 @@ final windowPlacementProvider = Provider<WindowPlacement>(
 
 /// This build's version, read before the app starts.
 final appVersionProvider = Provider<String>((ref) => '0.0.0');
+
+/// This computer, as ZipTop describes it to the server when signing in.
+final deviceDescriptionProvider = Provider<DeviceDescription>(
+  (ref) => DeviceDescription.current(ref.watch(appVersionProvider)),
+);
 
 /// Start-at-sign-in: the Run key on Windows, an XDG autostart entry on Linux.
 final startupRegistrationProvider = Provider<Autostart>((ref) => Autostart());

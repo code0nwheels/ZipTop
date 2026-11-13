@@ -43,6 +43,9 @@ enum SessionPhase {
   /// At the account's stream limit, or evicted by another device.
   streamLimit,
 
+  /// The account's plan doesn't include this channel.
+  notEntitled,
+
   /// The account-wide watch window closed without being extended.
   watchTimeUp,
 }
@@ -184,6 +187,8 @@ class PlaybackSession extends ChangeNotifier {
         await _api.checkLimit(streamId);
       } on StreamLimitException {
         rethrow;
+      } on NotEntitledException {
+        rethrow;
       } catch (_) {
         // Only a refusal stops us; the URL call is the real gate.
       }
@@ -200,6 +205,8 @@ class PlaybackSession extends ChangeNotifier {
         if (!ready) {
           try {
             await _api.start(streamId);
+          } on NotEntitledException {
+            rethrow;
           } catch (e) {
             throw ApiException('Failed to start stream: $e');
           }
@@ -250,6 +257,9 @@ class PlaybackSession extends ChangeNotifier {
     } on StreamLimitException catch (e) {
       if (stale()) return;
       _set(SessionPhase.streamLimit, message: e.message);
+    } on NotEntitledException catch (e) {
+      if (stale()) return;
+      _set(SessionPhase.notEntitled, message: e.message);
     } catch (e) {
       if (stale()) return;
       _set(SessionPhase.failed, message: e.toString());

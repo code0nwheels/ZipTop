@@ -31,6 +31,7 @@ class VideoPane extends StatefulWidget {
     required this.onToggleMini,
     required this.onActivity,
     required this.controlsVisible,
+    this.onSeePlans,
   });
 
   final LiveController live;
@@ -47,6 +48,9 @@ class VideoPane extends StatefulWidget {
   /// Mouse moved or clicked over the video.
   final VoidCallback onActivity;
   final bool controlsVisible;
+
+  /// Opens the plans page, offered when the plan doesn't include a channel.
+  final VoidCallback? onSeePlans;
 
   @override
   State<VideoPane> createState() => _VideoPaneState();
@@ -75,6 +79,11 @@ class _VideoPaneState extends State<VideoPane> {
             message: session.message ?? 'Stream limit reached.',
             action: 'Try again',
             onAction: live.retryNow,
+          ),
+        SessionPhase.notEntitled => _Notice(
+            message: session.message ?? "Your plan doesn't include this channel.",
+            action: widget.onSeePlans == null ? null : 'See plans',
+            onAction: widget.onSeePlans,
           ),
         SessionPhase.watchTimeUp => _Notice(
             message: session.message ?? 'Watch time limit reached.',

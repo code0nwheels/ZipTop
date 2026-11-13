@@ -38,6 +38,10 @@ class AccountInfo {
     this.expirationDate,
     this.neverExpires = false,
     this.streamCount = 0,
+    this.accessMode,
+    this.planLabel,
+    this.email,
+    this.streamLimit,
   });
 
   factory AccountInfo.fromJson(Json json) => AccountInfo(
@@ -46,6 +50,10 @@ class AccountInfo {
         expirationDate: asString(json['expiration_date']),
         neverExpires: asBool(json['never_expires']) ?? false,
         streamCount: asInt(json['stream_count']) ?? 0,
+        accessMode: asString(json['access_mode']),
+        planLabel: asString(json['plan_label']),
+        email: asString(json['email']),
+        streamLimit: asInt(json['stream_limit']),
       );
 
   final String username;
@@ -53,11 +61,42 @@ class AccountInfo {
   final String? expirationDate;
   final bool neverExpires;
   final int streamCount;
+
+  /// `full` (every channel) or `plans` (season plans only).
+  final String? accessMode;
+
+  /// The season plan's name, when [accessMode] is `plans`.
+  final String? planLabel;
+  final String? email;
+
+  /// Streams at once; 0 means no limit.
+  final int? streamLimit;
+
+  /// Days until [expirationDate] (negative once past), or null when it never
+  /// expires or the date is unknown.
+  int? daysLeft(DateTime now) {
+    if (neverExpires) return null;
+    final date = expirationDate == null ? null : DateTime.tryParse(expirationDate!);
+    if (date == null) return null;
+    return date.difference(now).inHours ~/ 24;
+  }
 }
 
 /// The account is at its concurrent-stream limit, or this session lost its slot.
 class StreamLimitException implements Exception {
   const StreamLimitException(this.message);
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// The account's plan doesn't include this channel (`not_entitled`).
+class NotEntitledException implements Exception {
+  const NotEntitledException([this.message = defaultMessage]);
+
+  static const defaultMessage = "Your plan doesn't include this channel.";
+
   final String message;
 
   @override

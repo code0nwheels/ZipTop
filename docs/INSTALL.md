@@ -186,20 +186,28 @@ Center) can add AppImages to the menu.
 
 ## Signing in (same on every computer)
 
-The first time ZipTop opens, it shows a **short code** and a **QR code**.
-You don't type a password into ZipTop itself.
+You sign in through the ZipStreams website. You don't type a password into
+ZipTop itself.
 
-1. On your phone, tablet or another computer, either:
-   - **scan the QR code** with your phone camera, or
-   - go to the web address shown on screen (it ends in **/link**) and type
-     in the code.
+1. Click **Sign in with your browser**. Your web browser opens the
+   ZipStreams sign-in page.
 2. Sign in with your ZipStreams account there if it asks.
-3. Wait a few seconds. ZipTop notices and opens your TV channels by itself.
+3. The page asks **Sign in ZipTop on** *your computer's name*? Click
+   **Approve**.
+4. Go back to ZipTop. It notices within a few seconds and opens your TV
+   channels by itself.
 
-If the code runs out of time, ZipTop shows a new one automatically. Just use
-the new one.
+If your browser doesn't open, click **Copy link** and paste the link into
+your browser yourself.
 
 You only sign in once. ZipTop remembers you after that.
+
+### Signing out
+
+**Settings → Sign out** signs this computer out, on the ZipStreams website
+too. Your account page on the website also lists every computer and TV
+signed in to your account under **Signed-in devices**, and **Remove** signs
+one out from there, for example a computer you no longer have.
 
 ---
 
@@ -239,6 +247,8 @@ them.
 | Mac says ZipTop "can't be opened" or "is damaged" | Do the [one-time extra step](#open-it-the-first-time-one-time-extra-step). If it says "damaged", delete ZipTop from Applications, download the DMG again and repeat. |
 | Mac says it won't run on this Mac | Your Mac has an Intel chip. Only Apple-chip Macs (M1 and newer) are supported. |
 | Linux: double-clicking does nothing, or opens a text editor | You skipped step 3: allow the file to run as a program. Then see [If double-clicking does nothing](#if-double-clicking-does-nothing). |
-| The sign-in code stays on screen forever | Check the computer is online. Make sure you typed the code on the **/link** page exactly as shown. |
+| ZipTop stays on the sign-in screen after approving | Check the computer is online, and that you clicked **Approve** in the browser. If the page said the code expired, click **Open the browser again**. |
+| Clicking **Sign in with your browser** does nothing | Click **Copy link** and paste the link into your browser. |
+| ZipTop went back to the sign-in screen by itself | It was signed out, from the website's account page or by a password change. Sign in again. |
 | I'm never offered updates | Mac: open ZipTop from Applications, not from the download window. Linux: keep the AppImage in a folder you own. |
 | Something else | [Open an issue](https://github.com/code0nwheels/ZipTop/issues) and say which computer you have and what you see on screen. A screenshot helps a lot. |
