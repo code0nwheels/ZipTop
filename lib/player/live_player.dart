@@ -9,8 +9,10 @@ import '../core/api/api_config.dart';
 import 'av_player.dart';
 import 'mpv_player.dart';
 import 'playback_stats.dart';
+import 'player_preferences.dart';
 
 export 'playback_stats.dart' show PlaybackStats;
+export 'player_preferences.dart' show PlayerPreferences;
 
 /// An audio or caption track the viewer can pick.
 @immutable
@@ -61,10 +63,11 @@ abstract class LivePlayer {
   factory LivePlayer.create({
     required ApiConfig config,
     PlayerTuning tuning = PlayerTuning.main,
+    PlayerPreferences preferences = PlayerPreferences.defaults,
   }) =>
       Platform.isMacOS
-          ? AvPlayer(config: config, tuning: tuning)
-          : MpvPlayer(config: config, tuning: tuning);
+          ? AvPlayer(config: config, tuning: tuning, preferences: preferences)
+          : MpvPlayer(config: config, tuning: tuning, preferences: preferences);
 
   /// The bitrates the open stream offers, highest first. Empty when it has
   /// just one, or before they are known.
@@ -86,6 +89,14 @@ abstract class LivePlayer {
 
   /// Whether the picture is going to an AirPlay device instead of this window.
   ValueListenable<bool> get externalPlayback;
+
+  /// Whether the picture is cropped to fill the view instead of letterboxed.
+  ValueListenable<bool> get fill;
+
+  /// Applies the viewer's player settings. Decoding and display settings
+  /// take effect at once; buffer and sound-output settings with the next
+  /// stream opened.
+  Future<void> applyPreferences(PlayerPreferences preferences);
 
   /// Whether this engine can send its picture over AirPlay.
   bool get supportsAirPlay;
@@ -151,5 +162,65 @@ Future<({String text, String url})?> fetchPlaylist(String url, {required String 
     return null;
   } finally {
     client.close(force: true);
+  }
+}
+
+/// The track in [tracks] whose language (or title) is [language], an ISO
+/// 639-1 code. Null when there is no preference or no match.
+MediaTrack? pickPreferredTrack(List<MediaTrack> tracks, String? language) {
+  final want = normalizeLanguage(language);
+  if (want == null) return null;
+  for (final t in tracks) {
+    if (t.id == 'no' || t.id == 'auto') continue;
+    if (normalizeLanguage(t.language) == want) return t;
+  }
+  for (final t in tracks) {
+    if (t.id == 'no' || t.id == 'auto') continue;
+    if (normalizeLanguage(t.title) == want) return t;
+  }
+  return null;
+}
+
+/// Picks the viewer's preferred audio and caption tracks once for each
+/// stream opened, so a track the viewer then chooses is left alone.
+class TrackAutoPicker {
+  int? _open;
+  bool _audioDone = false;
+  bool _captionsDone = false;
+
+  /// What to select now that stream number [open] offers [tracks]. Audio is
+  /// only picked while [audioEnabled] (a muted multiview tile has none).
+  ({MediaTrack? audio, MediaTrack? captions}) pick(
+    int open,
+    MediaTracks tracks,
+    PlayerPreferences preferences, {
+    bool audioEnabled = true,
+  }) {
+    if (open != _open) {
+      _open = open;
+      _audioDone = false;
+      _captionsDone = false;
+    }
+    MediaTrack? audio;
+    MediaTrack? captions;
+    if (!_audioDone && audioEnabled && tracks.audio.isNotEmpty) {
+      _audioDone = true;
+      final match = pickPreferredTrack(tracks.audio, preferences.audioLanguage);
+      if (match != null && match.id != tracks.audioId) audio = match;
+    }
+    if (!_captionsDone && preferences.captionsByDefault) {
+      final real = [
+        for (final t in tracks.captions)
+          if (t.id != 'no' && t.id != 'auto') t,
+      ];
+      // Broadcast captions can show up a while after the stream starts.
+      if (real.isNotEmpty) {
+        _captionsDone = true;
+        if (tracks.captionId == 'no') {
+          captions = pickPreferredTrack(real, preferences.captionLanguage) ?? real.first;
+        }
+      }
+    }
+    return (audio: audio, captions: captions);
   }
 }

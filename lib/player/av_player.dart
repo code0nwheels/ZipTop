@@ -17,7 +17,12 @@ import 'playback_stats.dart';
 /// (capped by `preferredPeakBitRate`) and can hand the stream to an Apple TV
 /// over AirPlay. It cannot play DASH; the app asks for HLS everywhere.
 class AvPlayer implements LivePlayer {
-  AvPlayer({required this.config, this.tuning = PlayerTuning.main}) {
+  AvPlayer({
+    required this.config,
+    this.tuning = PlayerTuning.main,
+    PlayerPreferences preferences = PlayerPreferences.defaults,
+  })  : _preferences = preferences,
+        fill = ValueNotifier(preferences.fill) {
     _ready = _create();
     // Every call awaits this and sees the failure; don't also report it as
     // unhandled before the first call.
@@ -35,6 +40,16 @@ class AvPlayer implements LivePlayer {
   bool _disposed = false;
   int? _bitrateCap;
   int _openCount = 0;
+  PlayerPreferences _preferences;
+  final _autoPicker = TrackAutoPicker();
+  bool _muted = false;
+
+  @override
+  final ValueNotifier<bool> fill;
+
+  /// How far ahead the next stream opened reads, from the viewer's settings.
+  double get _bufferSeconds =>
+      PlayerTuning.of(_preferences, tile: tuning.isTile).readaheadSeconds.toDouble();
 
   /// The Flutter texture the plugin draws into, once created.
   final textureId = ValueNotifier<int?>(null);
@@ -70,7 +85,7 @@ class AvPlayer implements LivePlayer {
 
   /// Only the main player offers AirPlay; multiview tiles stay local.
   @override
-  bool get supportsAirPlay => identical(tuning, PlayerTuning.main);
+  bool get supportsAirPlay => !tuning.isTile;
 
   @override
   Stream<bool> get completed => _completed.stream;
@@ -89,7 +104,7 @@ class AvPlayer implements LivePlayer {
 
   Future<void> _create() async {
     final created = await _channel.invokeMapMethod<String, Object?>('create', {
-      'bufferSeconds': tuning.readaheadSeconds.toDouble(),
+      'bufferSeconds': _bufferSeconds,
       'allowsAirPlay': supportsAirPlay,
     });
     final id = (created?['id'] as num?)?.toInt();
@@ -139,6 +154,14 @@ class AvPlayer implements LivePlayer {
         activeBitrate.value = rate == null || rate <= 0 ? null : _nearestVariant(rate);
       case 'tracks':
         tracks.value = _parseTracks(event);
+        final pick = _autoPicker.pick(
+          _openCount,
+          tracks.value,
+          _preferences,
+          audioEnabled: !_muted,
+        );
+        if (pick.audio case final audio?) unawaited(selectAudio(audio));
+        if (pick.captions case final captions?) unawaited(selectCaptions(captions));
       case 'caption':
         caption.value = (event['text'] as String?) ?? '';
       case 'external':
@@ -195,7 +218,17 @@ class AvPlayer implements LivePlayer {
       'userAgent': ApiConfig.mediaUserAgent,
       'headers': {'Referer': config.referer},
       'peakBitRate': _bitrateCap ?? 0,
+      'bufferSeconds': _bufferSeconds,
     });
+  }
+
+  /// Only the fill and buffer settings mean anything to AVPlayer; it picks
+  /// its own decoder and sound output.
+  @override
+  Future<void> applyPreferences(PlayerPreferences preferences) async {
+    if (_disposed) return;
+    _preferences = preferences;
+    fill.value = preferences.fill;
   }
 
   @override
@@ -218,7 +251,10 @@ class AvPlayer implements LivePlayer {
       _call('setVolume', {'volume': (volume / 100).clamp(0.0, 1.0)});
 
   @override
-  Future<void> setAudioEnabled(bool enabled) => _call('setMuted', {'muted': !enabled});
+  Future<void> setAudioEnabled(bool enabled) {
+    _muted = !enabled;
+    return _call('setMuted', {'muted': !enabled});
+  }
 
   @override
   Future<void> selectAudio(MediaTrack track) => _call('selectAudio', {'track': track.id});
@@ -310,19 +346,26 @@ class AvPlayerView extends StatelessWidget {
     return ColoredBox(
       color: Colors.black,
       child: ListenableBuilder(
-        listenable: Listenable.merge([player.textureId, player.aspectRatio, player.hasPicture]),
+        listenable: Listenable.merge(
+          [player.textureId, player.aspectRatio, player.hasPicture, player.fill],
+        ),
         builder: (context, _) {
           final texture = player.textureId.value;
           if (texture == null || !player.hasPicture.value) return const SizedBox.expand();
+          final aspect = player.aspectRatio.value ?? 16 / 9;
+          final picture = Texture(textureId: texture, filterQuality: FilterQuality.medium);
           return Stack(
             fit: StackFit.expand,
             children: [
-              Center(
-                child: AspectRatio(
-                  aspectRatio: player.aspectRatio.value ?? 16 / 9,
-                  child: Texture(textureId: texture, filterQuality: FilterQuality.medium),
-                ),
-              ),
+              if (player.fill.value)
+                ClipRect(
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    child: SizedBox(width: aspect * 1080, height: 1080, child: picture),
+                  ),
+                )
+              else
+                Center(child: AspectRatio(aspectRatio: aspect, child: picture)),
               _Captions(caption: player.caption),
             ],
           );

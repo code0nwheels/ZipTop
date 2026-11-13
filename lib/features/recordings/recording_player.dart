@@ -4,7 +4,6 @@ import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
-import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../core/api/api_config.dart';
 import '../../core/stores/settings_store.dart';
@@ -60,7 +59,10 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
   static const seekStep = Duration(seconds: 30);
   static const controlsLinger = Duration(seconds: 3);
 
-  late final MpvPlayer _mpv = MpvPlayer(config: widget.config);
+  late final MpvPlayer _mpv = MpvPlayer(
+    config: widget.config,
+    preferences: widget.settings.playerPreferences,
+  );
   final _focus = FocusNode(debugLabel: 'recording-player');
   final _subs = <StreamSubscription<dynamic>>[];
   Duration _position = Duration.zero;
@@ -108,12 +110,17 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
         }
       }),
     ]);
+    widget.settings.addListener(_onSettings);
     _touch();
     WidgetsBinding.instance.addPostFrameCallback((_) => _focus.requestFocus());
   }
 
+  /// Player settings changed while the recording plays.
+  void _onSettings() => unawaited(_mpv.applyPreferences(widget.settings.playerPreferences));
+
   @override
   void dispose() {
+    widget.settings.removeListener(_onSettings);
     _controlsTimer?.cancel();
     for (final sub in _subs) {
       unawaited(sub.cancel());
@@ -221,7 +228,7 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Video(controller: _mpv.controller, controls: NoVideoControls, fill: Colors.black),
+                  _mpv.view(),
                   if (_stats)
                     StatsOverlay(
                       read: _mpv.readStats,

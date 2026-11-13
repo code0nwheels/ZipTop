@@ -4,6 +4,8 @@ import 'dart:ui' show Rect;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../player/player_preferences.dart';
+
 /// Local, per-machine preferences. Everything about categories and favorites
 /// lives on the account instead; see `CatalogStore`.
 class SettingsStore extends ChangeNotifier {
@@ -29,6 +31,19 @@ class SettingsStore extends ChangeNotifier {
   static const _miniPlayerBoundsKey = 'mini_player_bounds';
   static const _windowBoundsKey = 'window_bounds';
   static const _windowMaximizedKey = 'window_maximized';
+  static const _hwdecKey = 'player_hardware_decoding';
+  static const _deinterlaceKey = 'player_deinterlace';
+  static const _surroundKey = 'player_surround';
+  static const _fillKey = 'player_fill';
+  static const _captionsDefaultKey = 'player_captions_by_default';
+  static const _captionLanguageKey = 'player_caption_language';
+  static const _audioLanguageKey = 'player_audio_language';
+  static const _bufferSecondsKey = 'player_buffer_seconds';
+  static const _bufferMegabytesKey = 'player_buffer_megabytes';
+  static const _tileBufferSecondsKey = 'player_tile_buffer_seconds';
+  static const _networkTimeoutKey = 'player_network_timeout_seconds';
+  static const _stallReloadKey = 'player_stall_reload_seconds';
+  static const _tileMaxBitrateKey = 'player_tile_max_bitrate';
 
   final SharedPreferences _prefs;
 
@@ -97,6 +112,75 @@ class SettingsStore extends ChangeNotifier {
     }
     notifyListeners();
   }
+
+  /// How the players decode, look, sound and buffer.
+  PlayerPreferences get playerPreferences {
+    const d = PlayerPreferences.defaults;
+    int choice(String key, List<int> choices, int fallback) {
+      final value = _prefs.getInt(key);
+      return value != null && choices.contains(value) ? value : fallback;
+    }
+
+    String? language(String key) {
+      final code = _prefs.getString(key);
+      return code != null && trackLanguages.containsKey(code) ? code : null;
+    }
+
+    final tileRate = _prefs.getInt(_tileMaxBitrateKey);
+    return PlayerPreferences(
+      hardwareDecoding: HardwareDecoding.byName(_prefs.getString(_hwdecKey)),
+      deinterlace: _prefs.getBool(_deinterlaceKey) ?? d.deinterlace,
+      surround: _prefs.getBool(_surroundKey) ?? d.surround,
+      fill: _prefs.getBool(_fillKey) ?? d.fill,
+      captionsByDefault: _prefs.getBool(_captionsDefaultKey) ?? d.captionsByDefault,
+      captionLanguage: language(_captionLanguageKey),
+      audioLanguage: language(_audioLanguageKey),
+      bufferSeconds:
+          choice(_bufferSecondsKey, PlayerPreferences.bufferSecondsChoices, d.bufferSeconds),
+      bufferMegabytes:
+          choice(_bufferMegabytesKey, PlayerPreferences.bufferMegabytesChoices, d.bufferMegabytes),
+      tileBufferSeconds: choice(
+          _tileBufferSecondsKey, PlayerPreferences.tileBufferSecondsChoices, d.tileBufferSeconds),
+      networkTimeoutSeconds: choice(
+          _networkTimeoutKey, PlayerPreferences.networkTimeoutChoices, d.networkTimeoutSeconds),
+      stallReloadSeconds:
+          choice(_stallReloadKey, PlayerPreferences.stallReloadChoices, d.stallReloadSeconds),
+      // Saved as 0 for no limit; missing or unknown is the default.
+      tileMaxBitrate: tileRate == 0
+          ? null
+          : tileRate != null && PlayerPreferences.tileMaxBitrateChoices.contains(tileRate)
+              ? tileRate
+              : d.tileMaxBitrate,
+    );
+  }
+
+  set playerPreferences(PlayerPreferences value) {
+    if (value == playerPreferences) return;
+    void setString(String key, String? text) =>
+        text == null ? _prefs.remove(key) : _prefs.setString(key, text);
+    _prefs.setString(_hwdecKey, value.hardwareDecoding.name);
+    _prefs.setBool(_deinterlaceKey, value.deinterlace);
+    _prefs.setBool(_surroundKey, value.surround);
+    _prefs.setBool(_fillKey, value.fill);
+    _prefs.setBool(_captionsDefaultKey, value.captionsByDefault);
+    setString(_captionLanguageKey, value.captionLanguage);
+    setString(_audioLanguageKey, value.audioLanguage);
+    _prefs.setInt(_bufferSecondsKey, value.bufferSeconds);
+    _prefs.setInt(_bufferMegabytesKey, value.bufferMegabytes);
+    _prefs.setInt(_tileBufferSecondsKey, value.tileBufferSeconds);
+    _prefs.setInt(_networkTimeoutKey, value.networkTimeoutSeconds);
+    _prefs.setInt(_stallReloadKey, value.stallReloadSeconds);
+    _prefs.setInt(_tileMaxBitrateKey, value.tileMaxBitrate ?? 0);
+    notifyListeners();
+  }
+
+  /// Changes some of the player settings.
+  void updatePlayerPreferences(PlayerPreferences Function(PlayerPreferences) change) =>
+      playerPreferences = change(playerPreferences);
+
+  /// Puts the Advanced page's buffer settings back to their defaults.
+  void resetAdvancedPlayback() =>
+      playerPreferences = playerPreferences.withAdvancedDefaults();
 
   /// Whether the channel panel sits beside the video.
   bool get panelOpen => _prefs.getBool(_panelOpenKey) ?? true;

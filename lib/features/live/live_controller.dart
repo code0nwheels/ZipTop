@@ -64,8 +64,10 @@ class LiveController extends ChangeNotifier {
     required this.settings,
     required this.session,
     required this.player,
-  }) {
+  }) : _preferences = settings.playerPreferences {
     session.addListener(_onSession);
+    settings.addListener(_onSettings);
+    unawaited(player.applyPreferences(_preferences));
     // While casting, this window's player is stopped and the device's
     // events count instead.
     _subs = [
@@ -90,7 +92,12 @@ class LiveController extends ChangeNotifier {
   static const numberCommitDelay = Duration(seconds: 2);
   static const numberErrorFlash = Duration(milliseconds: 700);
   static const _errorGrace = Duration(seconds: 4);
-  static const _stallLimit = Duration(seconds: 30);
+
+  /// How long the stream may buffer before it is reloaded.
+  Duration get _stallLimit => _preferences.stallReload;
+
+  /// The player settings last given to [player].
+  PlayerPreferences _preferences;
 
   final CatalogStore catalog;
   final SettingsStore settings;
@@ -363,6 +370,15 @@ class LiveController extends ChangeNotifier {
     }
   }
 
+  /// Hands changed player settings to the player. Settings changes are
+  /// frequent (volume, recents), so only a real change goes through.
+  void _onSettings() {
+    final preferences = settings.playerPreferences;
+    if (preferences == _preferences) return;
+    _preferences = preferences;
+    unawaited(player.applyPreferences(preferences));
+  }
+
   /// The bitrate cap the viewer picked, or null for the best there is.
   int? get maxBitrate => settings.maxBitrate;
 
@@ -537,6 +553,7 @@ class LiveController extends ChangeNotifier {
     _pollTimer?.cancel();
     _digitsTimer?.cancel();
     session.removeListener(_onSession);
+    settings.removeListener(_onSettings);
     unawaited(_remoteSub?.cancel());
     for (final sub in _subs) {
       unawaited(sub.cancel());
