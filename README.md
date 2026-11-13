@@ -236,8 +236,10 @@ TV app. ZipTop adds to it:
   DESKTOP-ABC?" and the account page can list it.
 - **Sign in with your browser** opens `<host>/link?code=<code>` in the default
   browser (`rundll32 url.dll` on Windows, `open` on macOS, `xdg-open` on
-  Linux; no plugin). The code and QR code stay for signing in from a phone.
-  Once approved, ZipTop raises its window over the browser.
+  Linux; no plugin). It shows no code or QR code; if the browser won't open,
+  **Copy link** offers the link to paste instead. An expired code is
+  replaced quietly. Once approved, ZipTop raises its window over the
+  browser.
 - At start-up, a signed-in copy sends `PUT api/auth/device` with its
   name and version. A token from before the server kept a device list comes
   back replaced by one that puts this computer on it.

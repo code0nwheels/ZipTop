@@ -11,9 +11,8 @@ import '../../core/platform/browser.dart';
 /// Device-code pairing: get a code, poll until it is approved on the web,
 /// then keep the token. A code that expires is replaced automatically.
 ///
-/// The code is approved either in the browser on this computer
-/// ([openBrowser] opens the approval page with the code filled in) or on
-/// another device, by typing the code or scanning the QR code.
+/// The code is approved in the browser on this computer: [openBrowser]
+/// opens the approval page with the code filled in.
 class LoginController extends ChangeNotifier {
   LoginController({
     required this.api,
@@ -49,7 +48,7 @@ class LoginController extends ChangeNotifier {
 
   String? get code => _code;
 
-  /// What the QR code encodes.
+  /// The approval page for the current code.
   String? get linkUrl => _linkUrl;
   int get expiresIn => _expiresIn;
   String? get error => _error;
@@ -65,7 +64,7 @@ class LoginController extends ChangeNotifier {
     final opened = await _browser(link);
     if (_disposed || link != _linkUrl) return;
     _browserOpened = opened;
-    _error = opened ? null : "Couldn't open your browser. Copy the link, or use the code below.";
+    _error = opened ? null : "Couldn't open your browser. Copy the link and paste it into your browser.";
     _notify();
   }
 

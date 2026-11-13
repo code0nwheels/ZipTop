@@ -48,12 +48,6 @@ class ApiConfig {
   String webUrl(String path) =>
       '$_current${path.startsWith('/') ? path.substring(1) : path}';
 
-  /// Shown under the pairing code, without scheme or trailing slash.
-  String get linkDisplay {
-    final uri = Uri.parse(_current);
-    return '${uri.host}/link';
-  }
-
   String resolveDownloadUrl(String downloadUrl) {
     if (downloadUrl.startsWith('http://') || downloadUrl.startsWith('https://')) {
       return downloadUrl;

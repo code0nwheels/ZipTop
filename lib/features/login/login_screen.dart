@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../providers.dart';
@@ -9,8 +8,7 @@ import '../../theme.dart';
 import '../../ui/zip_spinner.dart';
 import 'login_controller.dart';
 
-/// Sign-in: approve this computer in the browser here, or on another device
-/// with the code or the QR code.
+/// Sign-in: approve this computer in the browser on this computer.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key, required this.onPaired});
 
@@ -52,15 +50,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     super.dispose();
   }
 
-  String _countdown(int seconds) {
-    final m = seconds ~/ 60;
-    final s = (seconds % 60).toString().padLeft(2, '0');
-    return '$m:$s';
-  }
-
   @override
   Widget build(BuildContext context) {
-    final config = ref.watch(apiConfigProvider);
     final text = Theme.of(context).textTheme;
     return Scaffold(
       body: Center(
@@ -73,7 +64,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               final error = _controller.error;
               final opened = _controller.browserOpened;
               return ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 760),
+                constraints: const BoxConstraints(maxWidth: 560),
                 child: Padding(
                   padding: const EdgeInsets.all(32),
                   child: Column(
@@ -117,34 +108,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           textAlign: TextAlign.center,
                           style: text.bodyMedium?.copyWith(color: ZipColors.warnText),
                         ),
-                        if (code == null) ...[
-                          const SizedBox(height: 12),
+                        const SizedBox(height: 12),
+                        if (code == null)
                           FilledButton(
                             onPressed: _controller.start,
                             child: const Text('Try again'),
+                          )
+                        else if (link != null)
+                          // The browser wouldn't open: the link can still be
+                          // pasted into one by hand.
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              await Clipboard.setData(ClipboardData(text: link));
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Link copied')),
+                              );
+                            },
+                            icon: const Icon(Icons.link, size: 18),
+                            label: const Text('Copy link'),
                           ),
-                        ],
-                      ],
-                      if (code != null && link != null) ...[
-                        const SizedBox(height: 36),
-                        Text(
-                          'Or sign in from another device',
-                          style: text.titleMedium,
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Go to ${config.linkDisplay} on your phone or tablet and enter this code, '
-                          'or scan the QR code.',
-                          textAlign: TextAlign.center,
-                          style: text.bodyMedium?.copyWith(color: ZipColors.textSecondary),
-                        ),
-                        const SizedBox(height: 16),
-                        _CodeCard(
-                          code: code,
-                          link: link,
-                          expiresIn: _countdown(_controller.expiresIn),
-                        ),
                       ],
                     ],
                   ),
@@ -153,80 +136,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             },
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// The code, its countdown, a copyable link and the QR code, for signing in
-/// from another device.
-class _CodeCard extends StatelessWidget {
-  const _CodeCard({required this.code, required this.link, required this.expiresIn});
-
-  final String code;
-  final String link;
-  final String expiresIn;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: ZipColors.surface,
-        borderRadius: ZipRadius.lgAll,
-        border: Border.all(color: ZipColors.line),
-      ),
-      child: Wrap(
-        alignment: WrapAlignment.center,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 40,
-        runSpacing: 24,
-        children: [
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SelectableText(
-                code,
-                style: ZipText.mono(
-                  fontSize: 44,
-                  fontWeight: FontWeight.w700,
-                  color: ZipColors.accentText,
-                ).copyWith(letterSpacing: 6),
-              ),
-              const SizedBox(height: 8),
-              Text.rich(
-                TextSpan(
-                  text: 'Expires in ',
-                  children: [
-                    TextSpan(text: expiresIn, style: ZipText.mono(fontSize: 14)),
-                  ],
-                ),
-                style: text.bodyMedium?.copyWith(color: ZipColors.textMuted),
-              ),
-              const SizedBox(height: 16),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  await Clipboard.setData(ClipboardData(text: link));
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Link copied')),
-                  );
-                },
-                icon: const Icon(Icons.link, size: 18),
-                label: const Text('Copy link'),
-              ),
-            ],
-          ),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: ZipRadius.mdAll,
-            ),
-            child: QrImageView(data: link, size: 160),
-          ),
-        ],
       ),
     );
   }
