@@ -8,6 +8,7 @@ import '../core/api/api_config.dart';
 import 'live_player.dart';
 import 'mpv_player.dart'
     show MpvPlayer, PlayerTuning, StreamVariant, isDashUrl, variantsFromMasterPlaylist;
+import 'playback_stats.dart';
 
 /// The engine for macOS: an AVPlayer in the ziptop_avplayer plugin
 /// (packages/ziptop_avplayer), drawn through a Flutter texture.
@@ -247,6 +248,20 @@ class AvPlayer implements LivePlayer {
   Future<void> note(String text) async {
     if (MpvPlayer.diagnosticLogPath == null) return;
     debugPrint('ZipTop: $text');
+  }
+
+  @override
+  Future<PlaybackStats> readStats() async {
+    if (_disposed) return PlaybackStats.empty;
+    try {
+      await _ready;
+      final id = _id;
+      if (id == null || _disposed) return PlaybackStats.empty;
+      final raw = await _channel.invokeMapMethod<String, Object?>('stats', {'id': id});
+      return raw == null ? PlaybackStats.empty : statsFromAvPlayer(raw);
+    } catch (_) {
+      return PlaybackStats.empty;
+    }
   }
 
   @override

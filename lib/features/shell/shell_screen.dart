@@ -653,6 +653,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       if (selected != null && tiles.length > 1) _multi.toggleFullTile(selected);
     } else if (key == LogicalKeyboardKey.delete) {
       if (selected != null) _multi.remove(selected);
+    } else if (key == LogicalKeyboardKey.keyS) {
+      if (selected != null) _multi.toggleStats(selected);
     } else if (key == LogicalKeyboardKey.keyF || key == LogicalKeyboardKey.f11) {
       unawaited(_setFullscreen(!_fullscreen));
     } else if (key == LogicalKeyboardKey.escape) {
@@ -841,6 +843,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       _showView(_View.multiview);
     } else if (key == LogicalKeyboardKey.keyR) {
       _quickRecord();
+    } else if (key == LogicalKeyboardKey.keyS) {
+      if (_live.remote == null) _live.toggleStats();
     } else if (key == LogicalKeyboardKey.keyI) {
       // Info: show the controls with what's on.
     } else {

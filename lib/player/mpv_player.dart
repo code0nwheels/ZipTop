@@ -9,6 +9,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../core/api/api_config.dart';
 import '../dvr/capture/m3u8_parser.dart';
 import 'live_player.dart';
+import 'playback_stats.dart';
 
 /// Buffer and network settings for one player instance.
 class PlayerTuning {
@@ -347,6 +348,9 @@ class MpvPlayer implements LivePlayer {
   bool _variantsFromTracks = false;
   int? _bitrateCap;
 
+  /// `HLS`, `DASH` or `File`: what was last opened, for the stats panel.
+  String? _source;
+
   // Each player writes its cut-down master playlist to its own file.
   static int _instances = 0;
   final int _instance = _instances++;
@@ -423,6 +427,45 @@ class MpvPlayer implements LivePlayer {
     }
   }
 
+  /// The mpv properties the stats panel reads.
+  static const _statsProperties = [
+    'mpv-version',
+    'video-codec',
+    'video-params/w',
+    'video-params/h',
+    'video-params/pixelformat',
+    'hwdec-current',
+    'container-fps',
+    'estimated-vf-fps',
+    'video-bitrate',
+    'audio-codec-name',
+    'audio-params/samplerate',
+    'audio-params/channel-count',
+    'demuxer-cache-duration',
+    'cache-speed',
+    'frame-drop-count',
+    'decoder-frame-drop-count',
+    'avsync',
+  ];
+
+  @override
+  Future<PlaybackStats> readStats() async {
+    if (_disposed) return PlaybackStats.empty;
+    await _ready;
+    final native = player.platform;
+    if (_disposed || native is! NativePlayer) return PlaybackStats.empty;
+    final values = await Future.wait([
+      for (final name in _statsProperties)
+        native.getProperty(name).then<String?>((v) => v, onError: (Object _) => null),
+    ]);
+    if (_disposed) return PlaybackStats.empty;
+    return statsFromMpv(
+      {for (var i = 0; i < _statsProperties.length; i++) _statsProperties[i]: values[i]},
+      source: _source,
+      variantBitrate: activeBitrate.value,
+    );
+  }
+
   /// Starts playing a signed stream URL (HLS or DASH). Check [canPlay] first.
   @override
   Future<void> play(String url) async {
@@ -433,6 +476,7 @@ class MpvPlayer implements LivePlayer {
     // mpv lists only the HLS variant it opened, so the ladder comes from the
     // master playlist. For DASH it lists every representation.
     _variantsFromTracks = isDashUrl(url);
+    _source = _variantsFromTracks ? 'DASH' : 'HLS';
     var source = url;
     if (!_variantsFromTracks) {
       final master = await fetchPlaylist(url, referer: config.referer);
@@ -464,6 +508,7 @@ class MpvPlayer implements LivePlayer {
     await _ready;
     _forgetVariants();
     _variantsFromTracks = false;
+    _source = 'File';
     final from = start != null && start > Duration.zero ? start : null;
     await player.open(Media(path, start: from));
   }
@@ -486,6 +531,7 @@ class MpvPlayer implements LivePlayer {
   Future<void> stop() async {
     await _ready;
     _forgetVariants();
+    _source = null;
     await player.stop();
   }
 

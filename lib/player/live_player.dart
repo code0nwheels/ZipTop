@@ -8,6 +8,9 @@ import 'package:flutter/widgets.dart';
 import '../core/api/api_config.dart';
 import 'av_player.dart';
 import 'mpv_player.dart';
+import 'playback_stats.dart';
+
+export 'playback_stats.dart' show PlaybackStats;
 
 /// An audio or caption track the viewer can pick.
 @immutable
@@ -114,6 +117,10 @@ abstract class LivePlayer {
 
   /// Writes [text] into the diagnostic log, if there is one.
   Future<void> note(String text);
+
+  /// What the engine is doing now, for the "Stats for nerds" panel.
+  /// [PlaybackStats.empty] when it can't say.
+  Future<PlaybackStats> readStats();
 
   Future<void> dispose();
 

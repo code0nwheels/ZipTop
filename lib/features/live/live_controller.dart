@@ -135,6 +135,15 @@ class LiveController extends ChangeNotifier {
   /// True briefly after a number that matches no channel.
   bool get numberEntryInvalid => _digitsInvalid;
 
+  /// Whether the "Stats for nerds" panel is over the video. Not saved.
+  bool get statsVisible => _statsVisible;
+  bool _statsVisible = false;
+
+  void toggleStats() {
+    _statsVisible = !_statsVisible;
+    notifyListeners();
+  }
+
   /// The row Up/Down zaps within, or null for All channels.
   String? get scopeName => _scopeName;
 
