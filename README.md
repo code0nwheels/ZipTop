@@ -224,6 +224,31 @@ keeps publishing, so they update onto a version that asks the server.
 
 - Pairing token: Windows Credential Manager; on Linux the Secret Service
   keyring; on macOS the login keychain.
+
+## Signing in
+
+Sign-in is the backend's device-code pairing (`POST api/auth/tv/generate-code`,
+then `GET api/auth/tv/check-code/<code>` every 2.5 s), shared with the Android
+TV app. ZipTop adds to it:
+
+- The code request describes this computer (`client: ziptop`, its host name,
+  OS and version), so the approval page asks "Sign in ZipTop on
+  DESKTOP-ABC?" and the account page can list it.
+- **Sign in with your browser** opens `<host>/link?code=<code>` in the default
+  browser (`rundll32 url.dll` on Windows, `open` on macOS, `xdg-open` on
+  Linux; no plugin). The code and QR code stay for signing in from a phone.
+  Once approved, ZipTop raises its window over the browser.
+- At start-up, a signed-in copy sends `PUT api/auth/device` with its
+  name and version. A token from before the server kept a device list comes
+  back replaced by one that puts this computer on it.
+- Sign out sends `POST api/auth/logout` with the token before forgetting it,
+  which signs the device out on the server too. A device removed from the
+  account page gets a 401 on its next request and returns to sign-in.
+- A 403 with `not_entitled` (the plan doesn't include the channel) shows
+  "Your plan doesn't include this channel" with **See plans**. Settings shows
+  the plan, season plans from the catalogue's `viewer.plan_status` and the
+  email, with **Manage account** and, near expiry, **Renew**, which open the
+  website.
 - Settings and the recordings list: `%APPDATA%\com.zipstreams\ziptop\` on
   Windows, `~/.local/share/com.zipstreams.ziptop/` on Linux,
   `~/Library/Application Support/com.zipstreams.ziptop/` on macOS. The

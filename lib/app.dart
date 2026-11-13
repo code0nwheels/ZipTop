@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/auth/auth_events.dart';
+import 'core/platform/browser.dart';
 import 'features/login/login_screen.dart';
 import 'features/shell/shell_screen.dart';
 import 'providers.dart';
@@ -50,6 +51,21 @@ class _AppRootState extends ConsumerState<AppRoot> {
       await ref.read(windowPlacementProvider).show();
     }
     if (mounted) setState(() => _signedIn = token != null);
+    if (token != null) unawaited(_describeDevice());
+  }
+
+  /// Tells the server this computer's name and ZipTop version, for the
+  /// account's list of signed-in devices. A token from before that list
+  /// existed comes back replaced by one that puts this computer on it.
+  Future<void> _describeDevice() async {
+    try {
+      final replacement = await ref
+          .read(authApiProvider)
+          .describeDevice(ref.read(deviceDescriptionProvider));
+      if (replacement != null) await ref.read(tokenStoreProvider).write(replacement);
+    } catch (_) {
+      // Offline, or a server without the list: nothing to update.
+    }
   }
 
   void _onAuthEvent(AuthEvent event) {
@@ -67,6 +83,7 @@ class _AppRootState extends ConsumerState<AppRoot> {
   }
 
   Future<void> _signOutBlocked() async {
+    await ref.read(authApiProvider).logoutQuietly();
     await ref.read(tokenStoreProvider).clear();
     ref.read(catalogStoreProvider).clear();
     if (mounted) {
@@ -105,7 +122,16 @@ class _AppRootState extends ConsumerState<AppRoot> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  FilledButton(
+                  if (blocked.expired) ...[
+                    FilledButton(
+                      onPressed: () => unawaited(
+                        openInBrowser(ref.read(apiConfigProvider).webUrl('pricing')),
+                      ),
+                      child: const Text('Renew'),
+                    ),
+                    const SizedBox(width: 12),
+                  ],
+                  OutlinedButton(
                     onPressed: () => setState(() => _blocked = null),
                     child: const Text('Try again'),
                   ),

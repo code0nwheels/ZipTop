@@ -10,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../core/models/catalog.dart';
 import '../../core/platform/app_channel.dart';
+import '../../core/platform/browser.dart';
 import '../../core/platform/tray.dart';
 import '../../core/platform/window_placement.dart';
 import '../../core/session/playback_session.dart';
@@ -498,6 +499,10 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     if (!_controlsVisible && mounted) setState(() => _controlsVisible = true);
   }
 
+  /// The plans page on the ZipStreams website, in the browser.
+  void _openPlans() =>
+      unawaited(openInBrowser(ref.read(apiConfigProvider).webUrl('pricing')));
+
   Future<void> _signOut() async {
     if (_mini) await _setMini(false);
     if (_fullscreen) await _setFullscreen(false);
@@ -505,6 +510,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     await _live.shutdown();
     await _multi.closeAll();
     await _dvr.stopAll();
+    // Ends this computer's sign-in on the server too, not just here.
+    await ref.read(authApiProvider).logoutQuietly();
     await ref.read(tokenStoreProvider).clear();
     _catalog.clear();
     _guide.clear();
@@ -712,6 +719,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
         settings: _settings,
         catalog: _catalog,
         authApi: ref.read(authApiProvider),
+        config: ref.read(apiConfigProvider),
         updates: _updates,
         startup: ref.read(startupRegistrationProvider),
         onUpdate: (update) {
@@ -899,6 +907,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
               onActivity: _touchControls,
               onToggleFullscreen: () => _setFullscreen(!_fullscreen),
               onToggleMini: () => _setMini(!_mini),
+              onSeePlans: _openPlans,
             );
             final panel = ChannelPanel(
               live: _live,

@@ -15,6 +15,7 @@ class Catalog {
     this.apiVersion,
     this.accessMode,
     this.canViewCounts = false,
+    this.planStatus,
     this.favoriteIds = const [],
     this.streams = const [],
     this.categories = const [],
@@ -22,10 +23,12 @@ class Catalog {
 
   factory Catalog.fromJson(Json json) {
     final viewer = asJson(json['viewer']);
+    final plans = asJson(viewer?['plan_status']);
     return Catalog(
       apiVersion: asInt(json['api_version']),
       accessMode: asString(viewer?['access_mode']),
       canViewCounts: asBool(viewer?['can_view_counts']) ?? false,
+      planStatus: plans == null ? null : PlanStatus.fromJson(plans),
       favoriteIds: asStringList(json['favorite_ids']),
       streams: asList(json['streams'], Channel.tryParse),
       categories: asList(json['categories'], Category.tryParse),
@@ -35,9 +38,51 @@ class Catalog {
   final int? apiVersion;
   final String? accessMode;
   final bool canViewCounts;
+
+  /// The viewer's season plans; only sent for a `plans` account.
+  final PlanStatus? planStatus;
   final List<String> favoriteIds;
   final List<Channel> streams;
   final List<Category> categories;
+}
+
+/// `viewer.plan_status` in the catalogue: the season plans running now, the
+/// one that ended last and the next one booked.
+class PlanStatus {
+  const PlanStatus({this.activePlans = const [], this.lastEnded, this.nextPlan});
+
+  factory PlanStatus.fromJson(Json json) {
+    final last = asJson(json['last_ended']);
+    final next = asJson(json['next_plan']);
+    return PlanStatus(
+      activePlans: asList(json['active_plans'], PlanPeriod.tryParse),
+      lastEnded: last == null ? null : PlanPeriod.tryParse(last),
+      nextPlan: next == null ? null : PlanPeriod.tryParse(next),
+    );
+  }
+
+  final List<PlanPeriod> activePlans;
+  final PlanPeriod? lastEnded;
+  final PlanPeriod? nextPlan;
+}
+
+/// One season plan and when it runs.
+class PlanPeriod {
+  const PlanPeriod({required this.name, this.startsAt, this.endsAt});
+
+  static PlanPeriod? tryParse(Json json) {
+    final name = asString(json['name']);
+    if (name == null || name.isEmpty) return null;
+    return PlanPeriod(
+      name: name,
+      startsAt: asString(json['starts_at']),
+      endsAt: asString(json['ends_at']),
+    );
+  }
+
+  final String name;
+  final String? startsAt;
+  final String? endsAt;
 }
 
 /// One channel (`streams[]` in the catalogue).

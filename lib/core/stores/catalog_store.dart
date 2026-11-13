@@ -27,6 +27,7 @@ class CatalogStore extends ChangeNotifier {
   Set<String> _favoriteIds = const {};
   LiveState _live = const LiveState();
   bool _canViewCounts = false;
+  PlanStatus? _planStatus;
 
   DateTime? _loadedAt;
   DateTime? _liveAt;
@@ -41,6 +42,10 @@ class CatalogStore extends ChangeNotifier {
   Set<String> get favoriteIds => _favoriteIds;
   LiveState get live => _live;
   bool get canViewCounts => _canViewCounts;
+
+  /// The viewer's season plans, from the last catalogue; null for an account
+  /// that sees every channel.
+  PlanStatus? get planStatus => _planStatus;
 
   List<Category> get visibleCategories =>
       [for (final c in _categories) if (!c.hidden) c];
@@ -140,6 +145,7 @@ class CatalogStore extends ChangeNotifier {
     _categories = catalog.categories;
     _favoriteIds = catalog.favoriteIds.toSet();
     _canViewCounts = catalog.canViewCounts;
+    _planStatus = catalog.planStatus;
     _loadedAt = _now();
     notifyListeners();
   }

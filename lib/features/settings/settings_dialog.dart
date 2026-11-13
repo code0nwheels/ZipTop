@@ -3,8 +3,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../core/api/api_config.dart';
 import '../../core/api/auth_api.dart';
+import '../../core/models/catalog.dart' show PlanStatus;
 import '../../core/models/playback.dart';
+import '../../core/platform/browser.dart';
 import '../../core/platform/startup.dart';
 import '../../core/platform/tray.dart';
 import '../../core/stores/catalog_store.dart';
@@ -19,6 +22,7 @@ class SettingsDialog extends StatefulWidget {
     required this.settings,
     required this.catalog,
     required this.authApi,
+    required this.config,
     required this.updates,
     required this.startup,
     required this.onUpdate,
@@ -28,6 +32,9 @@ class SettingsDialog extends StatefulWidget {
   final SettingsStore settings;
   final CatalogStore catalog;
   final AuthApi authApi;
+
+  /// Where the website's account and plans pages are.
+  final ApiConfig config;
   final UpdateService updates;
   final Autostart startup;
 
@@ -106,6 +113,46 @@ class _SettingsDialogState extends State<SettingsDialog> {
         '${local.day.toString().padLeft(2, '0')}';
   }
 
+  /// What the account holds: every channel, or a season plan.
+  String _planName(AccountInfo account) => account.accessMode == 'plans'
+      ? (account.planLabel ?? 'Season plan')
+      : 'All channels';
+
+  /// A row per season plan running now; else the next one booked, or the
+  /// one that ended last.
+  List<Widget> _planFacts(PlanStatus? plans) {
+    if (plans == null) return const [];
+    if (plans.activePlans.isNotEmpty) {
+      return [
+        for (final plan in plans.activePlans) _Fact(plan.name, 'until ${_day(plan.endsAt)}'),
+      ];
+    }
+    final next = plans.nextPlan;
+    if (next != null) return [_Fact('Next plan', '${next.name} from ${_day(next.startsAt)}')];
+    final last = plans.lastEnded;
+    if (last != null) return [_Fact('Last plan', '${last.name}, ended ${_day(last.endsAt)}')];
+    return const [];
+  }
+
+  /// Renewal is worth offering within two weeks of expiry, or on a plans
+  /// account with no plan running or booked.
+  bool _offerRenewal(AccountInfo account, PlanStatus? plans) {
+    final days = account.daysLeft(DateTime.now());
+    if (days != null && days <= 14) return true;
+    return account.accessMode == 'plans' &&
+        plans != null &&
+        plans.activePlans.isEmpty &&
+        plans.nextPlan == null;
+  }
+
+  Future<void> _openWeb(String page) async {
+    final opened = await openInBrowser(widget.config.webUrl(page));
+    if (!opened && mounted) {
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(const SnackBar(content: Text("Couldn't open your browser")));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
@@ -147,15 +194,38 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   if (account == null) {
                     return const ListTile(dense: true, title: Text('Loading…'));
                   }
+                  final plans = widget.catalog.planStatus;
                   return Column(
                     children: [
                       _Fact('Username', account.username),
+                      _Fact('Plan', _planName(account)),
+                      ..._planFacts(plans),
                       _Fact('Member since', _day(account.createdAt)),
                       _Fact(
                         'Expires',
                         account.neverExpires ? 'Never' : _day(account.expirationDate),
                       ),
+                      _Fact('Email', account.email ?? 'Not set'),
                       _Fact('Streams open now', '${account.streamCount}'),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 10, 24, 0),
+                        child: Wrap(
+                          spacing: 12,
+                          runSpacing: 8,
+                          children: [
+                            if (_offerRenewal(account, plans))
+                              FilledButton(
+                                onPressed: () => _openWeb('pricing'),
+                                child: Text(account.accessMode == 'plans' ? 'See plans' : 'Renew'),
+                              ),
+                            OutlinedButton.icon(
+                              onPressed: () => _openWeb('account'),
+                              icon: const Icon(Icons.open_in_new, size: 18),
+                              label: const Text('Manage account'),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   );
                 },

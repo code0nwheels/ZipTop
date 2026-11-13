@@ -1,3 +1,5 @@
+import 'package:dio/dio.dart' show Response;
+
 import '../models/json.dart';
 import '../models/playback.dart';
 import 'api_client.dart';
@@ -31,6 +33,16 @@ class StreamsApi {
 
   String _id(String streamId) => Uri.encodeComponent(streamId);
 
+  /// Throws [NotEntitledException] for a 403 that says the plan doesn't
+  /// include the channel: `{"not_entitled": true}` from the viewer routes, or
+  /// a v2-style `{"error": {"code": "not_entitled"}}`.
+  static void _refuseIfNotEntitled(Response<dynamic> res) {
+    if (res.statusCode != 403) return;
+    if (asBool(res.json?['not_entitled']) == true || res.errorCode == 'not_entitled') {
+      throw NotEntitledException(res.errorMessage ?? NotEntitledException.defaultMessage);
+    }
+  }
+
   /// Passes the stream about to be opened so the server can exclude this
   /// client's own session. Throws [StreamLimitException] when refused.
   Future<void> checkLimit(String streamId) async {
@@ -49,6 +61,7 @@ class StreamsApi {
         limit == null ? 'Stream limit reached' : 'Stream limit reached ($count/$limit)',
       );
     }
+    _refuseIfNotEntitled(res);
     if (res.statusCode == 403) {
       throw StreamLimitException(res.errorMessage ?? 'Stream limit reached');
     }
@@ -65,6 +78,7 @@ class StreamsApi {
 
   Future<void> start(String streamId) async {
     final res = await _client.post('api/viewer/streams/${_id(streamId)}/start');
+    _refuseIfNotEntitled(res);
     if (!res.ok) {
       throw ApiException(
         res.errorMessage ?? 'Start failed: ${res.statusCode}',
@@ -80,6 +94,7 @@ class StreamsApi {
       headers: {'User-Agent': _preferAppleStream ? appleStreamUserAgent : null},
     );
     final json = res.json;
+    _refuseIfNotEntitled(res);
     if (res.statusCode == 403 && asBool(json?['stream_limit']) == true) {
       throw StreamLimitException(res.errorMessage ?? 'Stream limit reached');
     }

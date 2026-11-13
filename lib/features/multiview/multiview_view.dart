@@ -331,6 +331,8 @@ class _TileState extends State<_Tile> {
           message = session.message ?? 'Could not start this channel.';
         case SessionPhase.streamLimit:
           message = session.message ?? 'Stream limit reached.';
+        case SessionPhase.notEntitled:
+          message = session.message ?? "Your plan doesn't include this channel.";
         case SessionPhase.watchTimeUp:
           message = session.message ?? 'Watch time limit reached.';
         case SessionPhase.idle:

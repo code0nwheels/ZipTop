@@ -43,6 +43,11 @@ class ApiConfig {
 
   String linkUrl(String code) => '${_current}link?code=$code';
 
+  /// A page of the ZipStreams website on the host that is serving, such as
+  /// `account` or `pricing`.
+  String webUrl(String path) =>
+      '$_current${path.startsWith('/') ? path.substring(1) : path}';
+
   /// Shown under the pairing code, without scheme or trailing slash.
   String get linkDisplay {
     final uri = Uri.parse(_current);
