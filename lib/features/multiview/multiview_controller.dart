@@ -23,6 +23,9 @@ class MultiTile {
 
   bool paused = false;
 
+  /// Whether this tile shows the "Stats for nerds" panel. Not saved.
+  bool statsVisible = false;
+
   /// Set when the stream cannot be shown at all (unsupported format).
   String? failure;
 
@@ -187,6 +190,11 @@ class MultiviewController extends ChangeNotifier {
   void exitFullTile() {
     if (_fullTileId == null) return;
     _fullTileId = null;
+    _changed();
+  }
+
+  void toggleStats(MultiTile tile) {
+    tile.statsVisible = !tile.statsVisible;
     _changed();
   }
 

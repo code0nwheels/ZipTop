@@ -79,6 +79,9 @@ public class ZiptopAvplayerPlugin: NSObject, FlutterPlugin, AVRoutePickerViewDel
       player.selectAudio(args["track"] as? String)
     case "selectCaptions":
       player.selectCaptions(args["track"] as? String)
+    case "stats":
+      result(player.stats())
+      return
     case "showRoutePicker":
       showRoutePicker(for: player, args: args)
     case "dispose":
@@ -165,6 +168,8 @@ final class ZipAVPlayer: NSObject, FlutterTexture, FlutterStreamHandler,
   private var latest: CVPixelBuffer?
   private var sentFirstFrame = false
   private var lastBitrate: Double = 0
+  private var videoCodec: String?
+  private var loadingCodec = false
 
   private var frameTimer: Timer?
   private var timeObserver: Any?
@@ -247,6 +252,8 @@ final class ZipAVPlayer: NSObject, FlutterTexture, FlutterStreamHandler,
     legibleOutput = legible
     sentFirstFrame = false
     lastBitrate = 0
+    videoCodec = nil
+    loadingCodec = false
 
     observe(item)
     player.replaceCurrentItem(with: item)
@@ -417,6 +424,68 @@ final class ZipAVPlayer: NSObject, FlutterTexture, FlutterStreamHandler,
       lastBitrate = rate
       send(["event": "bitrate", "value": Int(rate)])
     }
+  }
+
+  /// What the stats panel shows. Never the stream URI or server address:
+  /// the URL is signed with the viewer's token.
+  func stats() -> [String: Any] {
+    guard let item = player.currentItem else { return [:] }
+    var stats: [String: Any] = [:]
+    if let event = item.accessLog()?.events.last {
+      stats["indicatedBitrate"] = event.indicatedBitrate
+      stats["observedBitrate"] = event.observedBitrate
+      stats["averageVideoBitrate"] = event.averageVideoBitrate
+      stats["stalls"] = event.numberOfStalls
+      stats["droppedFrames"] = event.numberOfDroppedVideoFrames
+    }
+    let size = item.presentationSize
+    if size.width > 0, size.height > 0 {
+      stats["width"] = Double(size.width)
+      stats["height"] = Double(size.height)
+    }
+    let now = item.currentTime()
+    if now.isNumeric {
+      for value in item.loadedTimeRanges {
+        let range = value.timeRangeValue
+        if range.containsTime(now) {
+          stats["bufferSeconds"] = max(0, (range.end - now).seconds)
+          break
+        }
+      }
+    }
+    if let video = item.tracks.first(where: { $0.assetTrack?.mediaType == .video }) {
+      if video.currentVideoFrameRate > 0 {
+        stats["fps"] = Double(video.currentVideoFrameRate)
+      }
+      if let codec = videoCodec {
+        stats["codec"] = codec
+      } else if let track = video.assetTrack {
+        loadCodec(of: track)
+      }
+    }
+    return stats
+  }
+
+  /// Fills in [videoCodec] for the next stats read.
+  private func loadCodec(of track: AVAssetTrack) {
+    guard !loadingCodec else { return }
+    loadingCodec = true
+    let current = token
+    Task { @MainActor [weak self] in
+      let formats = try? await track.load(.formatDescriptions)
+      guard let self = self, self.token == current else { return }
+      self.loadingCodec = false
+      if let format = formats?.first {
+        self.videoCodec = Self.fourCC(CMFormatDescriptionGetMediaSubType(format))
+      }
+    }
+  }
+
+  /// `0x61766331` → `avc1`.
+  private static func fourCC(_ code: FourCharCode) -> String {
+    let bytes = [24, 16, 8, 0].map { UInt8((code >> $0) & 0xFF) }
+    let text = String(bytes: bytes, encoding: .ascii) ?? ""
+    return text.trimmingCharacters(in: .whitespacesAndNewlines.union(.controlCharacters))
   }
 
   private func sendSize(_ size: CGSize) {

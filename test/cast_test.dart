@@ -304,6 +304,8 @@ class _FakePlayer implements LivePlayer {
   @override
   Future<void> note(String text) async {}
   @override
+  Future<PlaybackStats> readStats() async => PlaybackStats.empty;
+  @override
   Future<void> dispose() async {}
   @override
   Widget view() => const SizedBox();

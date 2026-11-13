@@ -5,6 +5,7 @@ import '../../core/session/playback_session.dart';
 import '../../theme.dart';
 import '../../ui/ch_num_chip.dart';
 import '../../ui/segmented_pills.dart';
+import '../../ui/stats_overlay.dart';
 import '../../ui/zip_spinner.dart';
 import 'channel_picker_dialog.dart';
 import 'multiview_controller.dart';
@@ -213,7 +214,7 @@ class MultiviewView extends StatelessWidget {
   }
 }
 
-enum _TileAction { change, retry, pause, enlarge, full, add, remove }
+enum _TileAction { change, retry, pause, enlarge, full, add, stats, remove }
 
 class _Tile extends StatefulWidget {
   const _Tile({
@@ -262,6 +263,8 @@ class _TileState extends State<_Tile> {
         controller.toggleFullTile(tile);
       case _TileAction.add:
         widget.onAdd?.call();
+      case _TileAction.stats:
+        controller.toggleStats(tile);
       case _TileAction.remove:
         controller.remove(tile);
     }
@@ -290,6 +293,11 @@ class _TileState extends State<_Tile> {
         ),
       if (widget.onAdd != null)
         const PopupMenuItem(value: _TileAction.add, child: Text('Add screen')),
+      CheckedPopupMenuItem(
+        value: _TileAction.stats,
+        checked: tile.statsVisible,
+        child: const Text('Stats for nerds (S)'),
+      ),
       const PopupMenuDivider(),
       const PopupMenuItem(
         value: _TileAction.remove,
@@ -386,6 +394,12 @@ class _TileState extends State<_Tile> {
                   key: ObjectKey(tile.player),
                   child: tile.player.view(),
                 ),
+                if (tile.statsVisible)
+                  StatsOverlay(
+                    read: () => tile.player.readStats(),
+                    onClose: () => widget.controller.toggleStats(tile),
+                    compact: true,
+                  ),
                 if (busy) const Center(child: ZipSpinner()),
                 if (message != null)
                   ColoredBox(

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter/material.dart';
 
 import '../../cast/cast_controller.dart';
@@ -11,6 +12,7 @@ import '../../player/live_player.dart';
 import '../../player/mpv_player.dart' show StreamVariant, formatBitrate;
 import '../../theme.dart';
 import '../../ui/ch_num_chip.dart';
+import '../../ui/stats_overlay.dart';
 import '../../ui/zip_spinner.dart';
 import 'channel_panel.dart' show nowPlayingProgress;
 import '../recordings/record_actions.dart';
@@ -107,104 +109,125 @@ class _VideoPaneState extends State<VideoPane> {
           ? SystemMouseCursors.none
           : SystemMouseCursors.basic,
       onHover: (_) => widget.onActivity(),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onActivity,
-        // Popped out, a double-click goes back to the full window.
-        onDoubleTap: widget.mini ? widget.onToggleMini : widget.onToggleFullscreen,
-        child: ColoredBox(
-          color: Colors.black,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              live.player.view(),
-              _ElsewhereCard(live: live, cast: widget.cast, compact: widget.mini),
-              if (notice == null && live.remote == null)
-                StreamBuilder<bool>(
-                  stream: live.player.buffering,
-                  initialData: live.player.isBuffering,
-                  builder: (context, snapshot) => snapshot.data == true
-                      ? const Center(child: ZipSpinner(size: 44))
-                      : const SizedBox.shrink(),
-                ),
-              if (notice != null) ColoredBox(color: ZipColors.overlayPlayer, child: notice),
-              if (live.numberEntry.isNotEmpty)
+      child: Listener(
+        // Read straight from the pointer so a right-click never waits on,
+        // or loses to, the tap and double-tap recognisers.
+        onPointerDown: (event) {
+          if (event.buttons & kSecondaryMouseButton != 0 && live.remote == null) {
+            widget.onActivity();
+            unawaited(showStatsMenu(
+              context,
+              event.position,
+              on: live.statsVisible,
+              onToggle: live.toggleStats,
+            ));
+          }
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onActivity,
+          // Popped out, a double-click goes back to the full window.
+          onDoubleTap: widget.mini ? widget.onToggleMini : widget.onToggleFullscreen,
+          child: ColoredBox(
+            color: Colors.black,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                live.player.view(),
+                if (live.statsVisible && live.remote == null)
+                  StatsOverlay(
+                    read: live.player.readStats,
+                    onClose: live.toggleStats,
+                    compact: widget.mini,
+                  ),
+                _ElsewhereCard(live: live, cast: widget.cast, compact: widget.mini),
+                if (notice == null && live.remote == null)
+                  StreamBuilder<bool>(
+                    stream: live.player.buffering,
+                    initialData: live.player.isBuffering,
+                    builder: (context, snapshot) => snapshot.data == true
+                        ? const Center(child: ZipSpinner(size: 44))
+                        : const SizedBox.shrink(),
+                  ),
+                if (notice != null) ColoredBox(color: ZipColors.overlayPlayer, child: notice),
+                if (live.numberEntry.isNotEmpty)
+                  Positioned(
+                    top: 20,
+                    right: 24,
+                    child: _NumberPill(
+                      digits: live.numberEntry,
+                      invalid: live.numberEntryInvalid,
+                    ),
+                  ),
                 Positioned(
-                  top: 20,
-                  right: 24,
-                  child: _NumberPill(
-                    digits: live.numberEntry,
-                    invalid: live.numberEntryInvalid,
-                  ),
-                ),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: IgnorePointer(
-                  ignoring: !showControls,
-                  child: AnimatedOpacity(
-                    opacity: showControls ? 1 : 0,
-                    duration: ZipMotion.fast,
-                    child: _ControlBar(
-                      live: live,
-                      cast: widget.cast,
-                      dvr: widget.dvr,
-                      guide: widget.guide,
-                      fullscreen: widget.fullscreen,
-                      onToggleFullscreen: widget.onToggleFullscreen,
-                      mini: widget.mini,
-                      onToggleMini: widget.onToggleMini,
-                    ),
-                  ),
-                ),
-              ),
-              if (warning != null)
-                Center(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: ZipColors.surface,
-                      borderRadius: ZipRadius.lgAll,
-                      border: Border.all(color: ZipColors.lineHi),
-                      boxShadow: ZipShadow.lg,
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(28, 24, 28, 22),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'Are you still watching?',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                          const SizedBox(height: 8),
-                          Text.rich(
-                            TextSpan(
-                              text: 'Playback stops in ',
-                              style: const TextStyle(color: ZipColors.textSecondary),
-                              children: [
-                                TextSpan(
-                                  text: '$warning s',
-                                  style: ZipText.mono(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    color: ZipColors.text,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          FilledButton(
-                            onPressed: session.extendWatch,
-                            child: const Text('Keep watching'),
-                          ),
-                        ],
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: IgnorePointer(
+                    ignoring: !showControls,
+                    child: AnimatedOpacity(
+                      opacity: showControls ? 1 : 0,
+                      duration: ZipMotion.fast,
+                      child: _ControlBar(
+                        live: live,
+                        cast: widget.cast,
+                        dvr: widget.dvr,
+                        guide: widget.guide,
+                        fullscreen: widget.fullscreen,
+                        onToggleFullscreen: widget.onToggleFullscreen,
+                        mini: widget.mini,
+                        onToggleMini: widget.onToggleMini,
                       ),
                     ),
                   ),
                 ),
-            ],
+                if (warning != null)
+                  Center(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: ZipColors.surface,
+                        borderRadius: ZipRadius.lgAll,
+                        border: Border.all(color: ZipColors.lineHi),
+                        boxShadow: ZipShadow.lg,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(28, 24, 28, 22),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Are you still watching?',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            const SizedBox(height: 8),
+                            Text.rich(
+                              TextSpan(
+                                text: 'Playback stops in ',
+                                style: const TextStyle(color: ZipColors.textSecondary),
+                                children: [
+                                  TextSpan(
+                                    text: '$warning s',
+                                    style: ZipText.mono(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: ZipColors.text,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            FilledButton(
+                              onPressed: session.extendWatch,
+                              child: const Text('Keep watching'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
