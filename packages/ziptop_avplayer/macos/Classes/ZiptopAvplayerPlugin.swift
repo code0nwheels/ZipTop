@@ -227,10 +227,11 @@ final class ZipAVPlayer: NSObject, FlutterTexture, FlutterStreamHandler,
 
   func open(
     url: URL, token: Int, userAgent: String?, headers: [String: String], peakBitRate: Double,
-    bufferSeconds: Double?
+    bufferSeconds requested: Double?
   ) {
     detachItem()
-    if let seconds = bufferSeconds, seconds > 0 { self.bufferSeconds = seconds }
+    // Kept for later opens that don't say; the parameter is optional.
+    if let seconds = requested, seconds > 0 { bufferSeconds = seconds }
     self.token = token
     var options: [String: Any] = [:]
     // Not public API, but long-standing and what every player uses for
