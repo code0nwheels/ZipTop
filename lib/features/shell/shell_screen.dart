@@ -116,7 +116,10 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
     _dvr = ref.read(dvrServiceProvider);
     _updates = ref.read(updateServiceProvider);
     _session = PlaybackSession(ref.read(streamsApiProvider), slots: slots);
-    _player = LivePlayer.create(config: ref.read(apiConfigProvider));
+    _player = LivePlayer.create(
+      config: ref.read(apiConfigProvider),
+      preferences: _settings.playerPreferences,
+    );
     _live = LiveController(
       catalog: _catalog,
       settings: _settings,
@@ -719,6 +722,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
       context: context,
       builder: (context) => SettingsDialog(
         settings: _settings,
+        setMaxBitrate: _live.setMaxBitrate,
         catalog: _catalog,
         authApi: ref.read(authApiProvider),
         config: ref.read(apiConfigProvider),

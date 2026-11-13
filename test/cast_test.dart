@@ -263,6 +263,8 @@ class _FakePlayer implements LivePlayer {
   final ValueNotifier<MediaTracks> tracks = ValueNotifier(MediaTracks.none);
   @override
   final ValueNotifier<bool> externalPlayback = ValueNotifier(false);
+  @override
+  final ValueNotifier<bool> fill = ValueNotifier(false);
 
   @override
   Stream<bool> get completed => _completed.stream;
@@ -276,6 +278,8 @@ class _FakePlayer implements LivePlayer {
   bool get isBuffering => false;
   @override
   bool get supportsAirPlay => false;
+  @override
+  Future<void> applyPreferences(PlayerPreferences preferences) async {}
 
   @override
   Future<bool> canPlay(String url) async => true;

@@ -11,21 +11,57 @@ import '../dvr/capture/m3u8_parser.dart';
 import 'live_player.dart';
 import 'playback_stats.dart';
 
-/// Buffer and network settings for one player instance.
+/// Buffer settings for one player instance, and which kind it is.
 class PlayerTuning {
   const PlayerTuning({
     required this.bufferBytes,
     required this.readaheadSeconds,
+    this.isTile = false,
   });
 
   /// The main player: generous buffer, like the Android app's 15–30 s window.
   static const main = PlayerTuning(bufferBytes: 32 * 1024 * 1024, readaheadSeconds: 30);
 
   /// A multiview tile: small buffer so eight of them stay light.
-  static const tile = PlayerTuning(bufferBytes: 8 * 1024 * 1024, readaheadSeconds: 12);
+  static const tile =
+      PlayerTuning(bufferBytes: 8 * 1024 * 1024, readaheadSeconds: 12, isTile: true);
+
+  /// The buffer the viewer's [preferences] give a main player or a tile.
+  factory PlayerTuning.of(PlayerPreferences preferences, {required bool tile}) => tile
+      ? PlayerTuning(
+          bufferBytes: PlayerTuning.tile.bufferBytes,
+          readaheadSeconds: preferences.tileBufferSeconds,
+          isTile: true,
+        )
+      : PlayerTuning(
+          bufferBytes: preferences.bufferMegabytes * 1024 * 1024,
+          readaheadSeconds: preferences.bufferSeconds,
+        );
 
   final int bufferBytes;
   final int readaheadSeconds;
+
+  /// A multiview tile rather than the main player.
+  final bool isTile;
+}
+
+/// The mpv options [preferences] set, for a main player or a [tile].
+Map<String, String> mpvOptions(PlayerPreferences preferences, {required bool tile}) {
+  final tuning = PlayerTuning.of(preferences, tile: tile);
+  return {
+    'network-timeout': '${preferences.networkTimeoutSeconds}',
+    'audio-channels': preferences.surround ? 'auto-safe' : 'stereo',
+    'hwdec': preferences.hardwareDecoding.mpvValue,
+    'deinterlace': preferences.deinterlace ? 'yes' : 'no',
+    'demuxer-max-bytes': '${tuning.bufferBytes}',
+    'demuxer-readahead-secs': '${tuning.readaheadSeconds}',
+    // With the cache on, mpv reads ahead by cache-secs (default: an
+    // hour) and ignores demuxer-readahead-secs. On a live stream that
+    // runs FFmpeg's DASH demuxer into the live edge, where it asks for
+    // segments that do not exist yet, skips them, then re-reads older
+    // ones: repeated audio and video jumping back.
+    'cache-secs': '${tuning.readaheadSeconds}',
+  };
 }
 
 /// True when [mpvVersion] (the `mpv-version` property, e.g.
@@ -231,11 +267,16 @@ int? _int(Object? value) => value is num ? value.toInt() : null;
 
 /// One mpv instance configured for ZipStreams' signed live streams.
 class MpvPlayer implements LivePlayer {
-  MpvPlayer({required this.config, this.tuning = PlayerTuning.main})
-      : player = Player(
+  MpvPlayer({
+    required this.config,
+    this.tuning = PlayerTuning.main,
+    PlayerPreferences preferences = PlayerPreferences.defaults,
+  })  : _preferences = preferences,
+        fill = ValueNotifier(preferences.fill),
+        player = Player(
           configuration: PlayerConfiguration(
             title: 'ZipTop',
-            bufferSize: tuning.bufferBytes,
+            bufferSize: PlayerTuning.of(preferences, tile: tuning.isTile).bufferBytes,
             logLevel: MPVLogLevel.warn,
           ),
         ) {
@@ -254,6 +295,14 @@ class MpvPlayer implements LivePlayer {
   late final StreamSubscription<Track> _selectionSub;
   bool _dashSafe = false;
   bool _disposed = false;
+  PlayerPreferences _preferences;
+  final _autoPicker = TrackAutoPicker();
+
+  /// Off on a muted multiview tile, whose audio track is switched off.
+  bool _audioEnabled = true;
+
+  @override
+  final ValueNotifier<bool> fill;
 
   @override
   final ValueNotifier<List<StreamVariant>> variants = ValueNotifier(const []);
@@ -298,8 +347,37 @@ class MpvPlayer implements LivePlayer {
   Future<void> setVolume(double volume) => player.setVolume(volume);
 
   @override
-  Future<void> setAudioEnabled(bool enabled) =>
-      player.setAudioTrack(enabled ? AudioTrack.auto() : AudioTrack.no());
+  Future<void> setAudioEnabled(bool enabled) async {
+    _audioEnabled = enabled;
+    if (!enabled) return player.setAudioTrack(AudioTrack.no());
+    final preferred = pickPreferredTrack(tracks.value.audio, _preferences.audioLanguage);
+    for (final t in player.state.tracks.audio) {
+      if (preferred != null && t.id == preferred.id) return player.setAudioTrack(t);
+    }
+    return player.setAudioTrack(AudioTrack.auto());
+  }
+
+  @override
+  Future<void> applyPreferences(PlayerPreferences preferences) async {
+    if (_disposed) return;
+    _preferences = preferences;
+    fill.value = preferences.fill;
+    await _ready;
+    if (_disposed) return;
+    await _setOptions(mpvOptions(preferences, tile: tuning.isTile));
+  }
+
+  Future<void> _setOptions(Map<String, String> options) async {
+    final native = player.platform;
+    if (native is! NativePlayer) return;
+    for (final entry in options.entries) {
+      try {
+        await native.setProperty(entry.key, entry.value);
+      } catch (_) {
+        // An option this mpv build does not know is not worth failing playback over.
+      }
+    }
+  }
 
   @override
   Future<void> selectAudio(MediaTrack track) async {
@@ -320,7 +398,15 @@ class MpvPlayer implements LivePlayer {
   Future<void> showAirPlayPicker(Rect anchor) async {}
 
   @override
-  Widget view() => Video(controller: controller, controls: NoVideoControls, fill: Colors.black);
+  Widget view() => ValueListenableBuilder<bool>(
+        valueListenable: fill,
+        builder: (context, fill, _) => Video(
+          controller: controller,
+          controls: NoVideoControls,
+          fill: Colors.black,
+          fit: fill ? BoxFit.cover : BoxFit.contain,
+        ),
+      );
 
   void _publishTracks() {
     if (_disposed) return;
@@ -340,6 +426,14 @@ class MpvPlayer implements LivePlayer {
       audioId: current.audio.id,
       captionId: current.subtitle.id,
     );
+    final pick = _autoPicker.pick(
+      _openCount,
+      tracks.value,
+      _preferences,
+      audioEnabled: _audioEnabled,
+    );
+    if (pick.audio case final audio?) unawaited(selectAudio(audio));
+    if (pick.captions case final captions?) unawaited(selectCaptions(captions));
   }
 
   // Bumped by every open, so a slow playlist fetch can't fill in the
@@ -375,31 +469,16 @@ class MpvPlayer implements LivePlayer {
       final options = <String, String>{
         // The Android app sends these on every media request and notes the CDN expects them.
         'user-agent': ApiConfig.mediaUserAgent,
-        'network-timeout': '15',
-        'audio-channels': 'stereo',
-        'hwdec': 'auto-safe',
         'cache': 'yes',
-        'demuxer-readahead-secs': '${tuning.readaheadSeconds}',
-        // With the cache on, mpv reads ahead by cache-secs (default: an
-        // hour) and ignores demuxer-readahead-secs. On a live stream that
-        // runs FFmpeg's DASH demuxer into the live edge, where it asks for
-        // segments that do not exist yet, skips them, then re-reads older
-        // ones: repeated audio and video jumping back.
-        'cache-secs': '${tuning.readaheadSeconds}',
+        ...mpvOptions(_preferences, tile: tuning.isTile),
       };
       final logFile = diagnosticLogPath;
-      if (logFile != null && identical(tuning, PlayerTuning.main)) {
+      if (logFile != null && !tuning.isTile) {
         // mpv writes its verbose log here: demuxer, segment and timestamp
         // detail that the warn-level log stream leaves out.
         options['log-file'] = logFile;
       }
-      for (final entry in options.entries) {
-        try {
-          await native.setProperty(entry.key, entry.value);
-        } catch (_) {
-          // An option this mpv build does not know is not worth failing playback over.
-        }
-      }
+      await _setOptions(options);
     }
     // Captions are off until the viewer picks a track.
     await player.setSubtitleTrack(SubtitleTrack.no());
@@ -546,6 +625,7 @@ class MpvPlayer implements LivePlayer {
     activeBitrate.dispose();
     tracks.dispose();
     externalPlayback.dispose();
+    fill.dispose();
     try {
       await _trimmedFile?.delete();
     } catch (_) {

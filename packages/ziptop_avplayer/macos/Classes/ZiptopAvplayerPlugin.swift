@@ -56,7 +56,8 @@ public class ZiptopAvplayerPlugin: NSObject, FlutterPlugin, AVRoutePickerViewDel
         token: (args["open"] as? NSNumber)?.intValue ?? 0,
         userAgent: args["userAgent"] as? String,
         headers: args["headers"] as? [String: String] ?? [:],
-        peakBitRate: (args["peakBitRate"] as? NSNumber)?.doubleValue ?? 0)
+        peakBitRate: (args["peakBitRate"] as? NSNumber)?.doubleValue ?? 0,
+        bufferSeconds: (args["bufferSeconds"] as? NSNumber)?.doubleValue)
     case "stop":
       player.stop()
     case "pause":
@@ -156,7 +157,8 @@ final class ZipAVPlayer: NSObject, FlutterTexture, FlutterStreamHandler,
   private weak var textures: FlutterTextureRegistry?
   private let eventChannel: FlutterEventChannel
   private var sink: FlutterEventSink?
-  private let bufferSeconds: Double
+  /// The read-ahead for the next stream opened; the viewer can change it.
+  private var bufferSeconds: Double
 
   private var token = 0
   private var output: AVPlayerItemVideoOutput?
@@ -223,9 +225,12 @@ final class ZipAVPlayer: NSObject, FlutterTexture, FlutterStreamHandler,
 
   // MARK: Playback
 
-  func open(url: URL, token: Int, userAgent: String?, headers: [String: String], peakBitRate: Double)
-  {
+  func open(
+    url: URL, token: Int, userAgent: String?, headers: [String: String], peakBitRate: Double,
+    bufferSeconds: Double?
+  ) {
     detachItem()
+    if let seconds = bufferSeconds, seconds > 0 { self.bufferSeconds = seconds }
     self.token = token
     var options: [String: Any] = [:]
     // Not public API, but long-standing and what every player uses for

@@ -50,16 +50,23 @@ class MultiviewController extends ChangeNotifier {
     required this._api,
     required this._config,
     this.slots,
-  }) : _layout = MultiLayout.byName(settings.multiviewLayout);
+  })  : _layout = MultiLayout.byName(settings.multiviewLayout),
+        _preferences = settings.playerPreferences {
+    settings.addListener(_onSettings);
+  }
 
   static const unsupportedMessage = "This channel's stream format can't be played.";
-  /// Small tiles take the best variant at or under this, roughly 720p, or
-  /// the viewer's own cap when that is lower.
-  static const tileBitrateCap = 4500000;
+  /// Small tiles take the best variant at or under this (by default
+  /// 4.5 Mbps, roughly 720p), or the viewer's own cap when that is lower.
+  /// Null when the viewer turned the limit off.
+  int? get tileBitrateCap => _preferences.tileMaxBitrate;
   static const startStagger = Duration(milliseconds: 200);
   static const rebuildEvery = 5;
   static const _errorGrace = Duration(seconds: 4);
-  static const _stallLimit = Duration(seconds: 30);
+  Duration get _stallLimit => _preferences.stallReload;
+
+  /// The player settings last given to the tiles.
+  PlayerPreferences _preferences;
 
   final CatalogStore catalog;
   final SettingsStore settings;
@@ -236,7 +243,7 @@ class MultiviewController extends ChangeNotifier {
       _nextId++,
       channel,
       PlaybackSession(_api, slots: slots),
-      LivePlayer.create(config: _config, tuning: PlayerTuning.tile),
+      LivePlayer.create(config: _config, tuning: PlayerTuning.tile, preferences: _preferences),
     );
     tile._sessionListener = () => _onSession(tile);
     tile.session.addListener(tile._sessionListener!);
@@ -310,10 +317,9 @@ class MultiviewController extends ChangeNotifier {
     // the player load it all over again.
     final capped = _tiles.length > 1 && _fullTileId != tile.id;
     final chosen = settings.maxBitrate;
-    tile._loadedCapped = capped && (chosen == null || chosen > tileBitrateCap);
-    await player.setHlsBitrateCap(
-      tile._loadedCapped ? tileBitrateCap : chosen,
-    );
+    final tileCap = tileBitrateCap;
+    tile._loadedCapped = capped && tileCap != null && (chosen == null || chosen > tileCap);
+    await player.setHlsBitrateCap(tile._loadedCapped ? tileCap : chosen);
     await _setAudio(tile);
     if (_disposed || tile._playingUrl != url || tile.player != player) return;
     await player.play(url);
@@ -355,7 +361,7 @@ class MultiviewController extends ChangeNotifier {
       unawaited(sub.cancel());
     }
     final old = tile.player;
-    tile.player = LivePlayer.create(config: _config, tuning: PlayerTuning.tile);
+    tile.player = LivePlayer.create(config: _config, tuning: PlayerTuning.tile, preferences: _preferences);
     _subscribe(tile);
     unawaited(old.dispose());
     _changed();
@@ -413,9 +419,20 @@ class MultiviewController extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  /// Hands changed player settings to every tile's player.
+  void _onSettings() {
+    final preferences = settings.playerPreferences;
+    if (preferences == _preferences) return;
+    _preferences = preferences;
+    for (final tile in _tiles) {
+      unawaited(tile.player.applyPreferences(preferences));
+    }
+  }
+
   @override
   void dispose() {
     _disposed = true;
+    settings.removeListener(_onSettings);
     for (final tile in [..._tiles]) {
       unawaited(_release(tile));
     }
