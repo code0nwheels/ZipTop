@@ -8,10 +8,15 @@ import 'package:pointycastle/export.dart';
 import '../disk_space.dart';
 import '../models.dart';
 import 'm3u8_parser.dart';
+import 'mp4_join.dart';
+import 'ts_join.dart';
 
 /// Thrown inside a capture when its [CaptureToken] is cancelled.
 class CaptureCancelled implements Exception {
-  const CaptureCancelled();
+  const CaptureCancelled([this.container]);
+
+  /// The container written before the stop, when the capture got that far.
+  final String? container;
 }
 
 /// Lets the owner stop a capture between, or during, its waits.
@@ -34,6 +39,35 @@ class CaptureToken {
     await Future.any([Future<void>.delayed(duration), _cancelled.future]);
     check();
   }
+}
+
+/// One media playlist being followed.
+class _Track {
+  _Track(this.url);
+  String url;
+  int nextSequence = -1;
+  String lastSignature = '';
+
+  /// First pass: start near the live edge rather than replaying the whole
+  /// server-side window.
+  void startNearLiveEdge(HlsMediaPlaylist playlist) {
+    if (nextSequence >= 0) return;
+    final back = playlist.segments.length - 2;
+    nextSequence = playlist.mediaSequence + (back < 0 ? 0 : back);
+  }
+}
+
+/// What a stream URL resolves to.
+class _Playlists {
+  const _Playlists(this.videoUrl, this.videoText, this.audioUrl);
+  final String videoUrl;
+  final String videoText;
+  final String? audioUrl;
+}
+
+class _Unreadable implements Exception {
+  const _Unreadable(this.message);
+  final String message;
 }
 
 /// Where captured bytes go.
@@ -133,6 +167,11 @@ class CaptureConfig {
 /// without a muxer: a run of MPEG-TS segments is a valid TS file, and an
 /// EXT-X-MAP init segment followed by fMP4 fragments is a valid fragmented
 /// MP4. Neither carries a duration header, so seeking is approximate.
+///
+/// When the variant's audio is a rendition of its own (typical of 5.1
+/// channels), that playlist is followed too and its segments are folded into
+/// the same file: [TsAudioJoiner] for a transport stream, [Mp4AudioJoiner]
+/// for fMP4.
 abstract final class HlsCapture {
   /// A single segment larger than this is treated as a failure.
   static const maxSegmentBytes = 48 * 1024 * 1024;
@@ -175,9 +214,7 @@ abstract final class HlsCapture {
     var container = 'ts';
     var wroteInit = false;
     var urlReresolves = 0;
-    var playlistUrl = initialUrl;
     final keyCache = <String, Uint8List>{};
-    var nextSequence = -1;
     var lastSpaceCheck = clock();
     var segmentsSinceProgress = 0;
 
@@ -187,11 +224,11 @@ abstract final class HlsCapture {
     try {
       // A direct MPEG-TS endpoint never closes its body, so the first read is
       // bounded: enough to see #EXTM3U and no more.
-      final probe = await _probeHead(client, playlistUrl, config);
+      final probe = await _probeHead(client, initialUrl, config);
       if (probe == null) return fail(RecordingFailure.network, 'Could not open the stream');
       if (!M3u8Parser.isPlaylist(probe)) {
         return await _direct(
-          url: playlistUrl,
+          url: initialUrl,
           client: client,
           sink: sink,
           config: config,
@@ -203,30 +240,105 @@ abstract final class HlsCapture {
         );
       }
 
-      var playlistText = await _fetchText(client, playlistUrl, config);
-      if (playlistText == null) {
-        return fail(RecordingFailure.network, 'Could not read the stream playlist');
+      final _Playlists first;
+      try {
+        first = await _resolvePlaylists(client, initialUrl, config);
+      } on _Unreadable catch (e) {
+        return fail(RecordingFailure.network, e.message);
       }
-      if (M3u8Parser.isMaster(playlistText)) {
-        final chosen = pickVariant(
-          M3u8Parser.parseMaster(playlistText, playlistUrl),
-          config.variantPreference,
-        );
-        if (chosen == null) {
-          return fail(RecordingFailure.network, 'No playable variant in the stream');
-        }
-        playlistUrl = chosen.uri;
-        playlistText = await _fetchText(client, playlistUrl, config);
-        if (playlistText == null) {
-          return fail(RecordingFailure.network, 'Could not open the stream variant');
-        }
-      }
+
+      final video = _Track(first.videoUrl);
+      // The variant's audio, when it is a rendition of its own rather than
+      // muxed into the video segments.
+      var audio = first.audioUrl == null ? null : _Track(first.audioUrl!);
+      AudioJoiner? joiner;
+
+      // After a fresh stream URL, which may be a master, before reading on.
+      var streamUrl = initialUrl;
+      var resolvePending = false;
 
       DateTime? outageStarted;
       var consecutiveSegmentFailures = 0;
       var backoff = const Duration(seconds: 1);
-      var lastSignature = '';
-      String text = playlistText;
+      String text = first.videoText;
+
+      // The audio playlist as just read for its init segment, so following it
+      // starts from the same window as the video.
+      String? fetchedAudioText;
+
+      Future<Uint8List> decrypt(Uint8List bytes, HlsSegment segment) =>
+          _decrypt(bytes, segment, keyCache, client, config);
+
+      /// Appends the audio rendition's new segments. Its failures are gaps;
+      /// whether the stream is alive is the video's call.
+      Future<CaptureFailed?> followAudio(_Track track) async {
+        final audioText = fetchedAudioText ?? await _fetchText(client, track.url, config);
+        fetchedAudioText = null;
+        if (audioText == null) return null;
+        final playlist = M3u8Parser.parseMedia(audioText, track.url);
+        // Audio joins video of its own kind: TS into the transport stream,
+        // fMP4 through the init segment merged before any fragment.
+        final fmp4 = playlist.initSegmentUri != null;
+        if (fmp4 != (container == 'mp4') || (fmp4 && joiner == null)) {
+          audio = null;
+          return null;
+        }
+        final j = joiner ??= TsAudioJoiner();
+        track.startNearLiveEdge(playlist);
+        if (track.nextSequence < playlist.mediaSequence) {
+          gapCount++;
+          track.nextSequence = playlist.mediaSequence;
+        }
+        for (final segment in playlist.segments) {
+          token.check();
+          if (segment.sequence < track.nextSequence) continue;
+          if (!clock().isBefore(deadline)) break;
+          final key = segment.key;
+          if (key != null && !key.isClear && !key.isAes128) {
+            return fail(
+              RecordingFailure.unsupportedCrypto,
+              'This stream uses ${key.method} encryption, which cannot be recorded',
+            );
+          }
+          var bytes = await _fetchBytes(client, segment.uri, config);
+          track.nextSequence = segment.sequence + 1;
+          if (bytes == null) {
+            gapCount++;
+            continue;
+          }
+          if (key != null && !key.isClear) {
+            try {
+              bytes = await decrypt(bytes, segment);
+            } catch (e) {
+              return fail(RecordingFailure.unsupportedCrypto, 'Could not decrypt the stream: $e');
+            }
+          }
+          final joined = j.audio(bytes);
+          if (joined.isEmpty) continue;
+          try {
+            await sink.write(joined);
+          } on FileSystemException catch (e) {
+            return fail(RecordingFailure.diskFull, 'Could not write to storage: ${e.message}');
+          }
+        }
+        return null;
+      }
+
+      /// The video's init segment with the audio rendition's track added, or
+      /// null when the audio cannot be joined.
+      Future<Uint8List?> withAudioTrack(Uint8List videoInit, _Track track) async {
+        final audioText = await _fetchText(client, track.url, config);
+        if (audioText == null) return null;
+        fetchedAudioText = audioText;
+        final audioInitUri = M3u8Parser.parseMedia(audioText, track.url).initSegmentUri;
+        if (audioInitUri == null) return null;
+        final audioInit = await _fetchBytes(client, audioInitUri, config);
+        if (audioInit == null) return null;
+        final joined = Mp4AudioJoiner.join(videoInit, audioInit);
+        if (joined == null) return null;
+        joiner = joined.$2;
+        return joined.$1;
+      }
 
       while (true) {
         token.check();
@@ -237,7 +349,23 @@ abstract final class HlsCapture {
         }
 
         if (text.isEmpty) {
-          final refreshed = await _fetchText(client, playlistUrl, config);
+          String? refreshed;
+          if (resolvePending) {
+            try {
+              final lists = await _resolvePlaylists(client, streamUrl, config);
+              video
+                ..url = lists.videoUrl
+                ..nextSequence = -1
+                ..lastSignature = '';
+              audio = lists.audioUrl == null ? null : _Track(lists.audioUrl!);
+              resolvePending = false;
+              refreshed = lists.videoText;
+            } on _Unreadable {
+              refreshed = null;
+            }
+          } else {
+            refreshed = await _fetchText(client, video.url, config);
+          }
           if (refreshed == null) {
             outageStarted ??= now;
             if (now.difference(outageStarted) > maxOutage) {
@@ -259,40 +387,53 @@ abstract final class HlsCapture {
           backoff = const Duration(seconds: 1);
         }
 
-        final playlist = M3u8Parser.parseMedia(text, playlistUrl);
+        final playlist = M3u8Parser.parseMedia(text, video.url);
         final signature =
             '${playlist.segments.isEmpty ? '' : playlist.segments.last.uri}:${playlist.mediaSequence}';
-        final playlistChanged = signature != lastSignature;
-        lastSignature = signature;
+        final playlistChanged = signature != video.lastSignature;
+        video.lastSignature = signature;
 
         // The fMP4 init segment goes in once, before any media fragment.
         final initUri = playlist.initSegmentUri;
         if (!wroteInit && initUri != null) {
           final init = await _fetchBytes(client, initUri, config);
           if (init != null) {
-            await sink.write(init);
+            var head = init;
+            final audioTrack = audio;
+            if (audioTrack != null) {
+              final merged = await withAudioTrack(init, audioTrack);
+              if (merged == null) {
+                audio = null;
+              } else {
+                head = merged;
+              }
+            }
+            await sink.write(head);
             wroteInit = true;
             container = 'mp4';
           }
         }
 
-        // First pass: start near the live edge rather than replaying the
-        // whole server-side window.
-        if (nextSequence < 0) {
-          final back = playlist.segments.length - 2;
-          nextSequence = playlist.mediaSequence + (back < 0 ? 0 : back);
+        // Audio first, so a TS's audio streams are known before the first
+        // video PMT is written.
+        final audioTrack = audio;
+        if (audioTrack != null) {
+          final failed = await followAudio(audioTrack);
+          if (failed != null) return failed;
         }
+
+        video.startNearLiveEdge(playlist);
         // The playlist rolled past us while we were busy or offline.
-        if (nextSequence < playlist.mediaSequence) {
+        if (video.nextSequence < playlist.mediaSequence) {
           gapCount++;
-          nextSequence = playlist.mediaSequence;
+          video.nextSequence = playlist.mediaSequence;
         }
 
         var wroteAny = false;
         var restartPlaylist = false;
         for (final segment in playlist.segments) {
           token.check();
-          if (segment.sequence < nextSequence) continue;
+          if (segment.sequence < video.nextSequence) continue;
           if (!clock().isBefore(deadline)) break;
 
           final key = segment.key;
@@ -317,16 +458,15 @@ abstract final class HlsCapture {
               if (fresh == null || fresh.trim().isEmpty) {
                 await token.wait(const Duration(seconds: 5));
               } else {
-                playlistUrl = fresh;
-                nextSequence = -1;
-                lastSignature = '';
+                streamUrl = fresh;
+                resolvePending = true;
               }
               text = '';
               restartPlaylist = true;
               break;
             }
             // One missing segment is a gap, not the end of the recording.
-            nextSequence = segment.sequence + 1;
+            video.nextSequence = segment.sequence + 1;
             gapCount++;
             continue;
           }
@@ -334,11 +474,14 @@ abstract final class HlsCapture {
 
           if (key != null && !key.isClear) {
             try {
-              bytes = await _decrypt(bytes, segment, keyCache, client, config);
+              bytes = await decrypt(bytes, segment);
             } catch (e) {
               return fail(RecordingFailure.unsupportedCrypto, 'Could not decrypt the stream: $e');
             }
           }
+          // List the joined audio in the video's PMTs.
+          final j = joiner;
+          if (j != null && j.hasAudio) bytes = j.video(bytes);
 
           // Only a whole, decrypted segment reaches the file: a failed
           // segment is a clean gap, never a torn fragment.
@@ -348,7 +491,7 @@ abstract final class HlsCapture {
             return fail(RecordingFailure.diskFull, 'Could not write to storage: ${e.message}');
           }
 
-          nextSequence = segment.sequence + 1;
+          video.nextSequence = segment.sequence + 1;
           wroteAny = true;
           if (++segmentsSinceProgress >= progressEverySegments) {
             segmentsSinceProgress = 0;
@@ -380,9 +523,8 @@ abstract final class HlsCapture {
           await token.wait(const Duration(seconds: 5));
           final fresh = await resolveUrl();
           if (fresh != null && fresh.trim().isNotEmpty) {
-            playlistUrl = fresh;
-            nextSequence = -1;
-            lastSignature = '';
+            streamUrl = fresh;
+            resolvePending = true;
           }
           text = '';
           continue;
@@ -404,14 +546,34 @@ abstract final class HlsCapture {
       onProgress(sink.bytesWritten, gapCount);
       return CaptureFinished(sink.bytesWritten, gapCount, container);
     } on CaptureCancelled {
-      // Stopped deliberately. What is on disk stays; the caller labels it.
+      // Stopped deliberately. What is on disk stays; the caller labels it,
+      // and names the file by what was written.
       try {
         await sink.flush();
       } catch (_) {}
-      rethrow;
+      throw CaptureCancelled(container);
     } catch (e) {
       return fail(RecordingFailure.network, 'Recording failed: $e');
     }
+  }
+
+  /// The media playlists behind [url]: the video variant the quality setting
+  /// picks and, when that variant's audio is a separate rendition, the audio
+  /// playlist. A media playlist URL is its own video.
+  static Future<_Playlists> _resolvePlaylists(
+    HttpClient client,
+    String url,
+    CaptureConfig config,
+  ) async {
+    final text = await _fetchText(client, url, config);
+    if (text == null) throw const _Unreadable('Could not read the stream playlist');
+    if (!M3u8Parser.isMaster(text)) return _Playlists(url, text, null);
+    final chosen = pickVariant(M3u8Parser.parseMaster(text, url), config.variantPreference);
+    if (chosen == null) throw const _Unreadable('No playable variant in the stream');
+    final variantText = await _fetchText(client, chosen.uri, config);
+    if (variantText == null) throw const _Unreadable('Could not open the stream variant');
+    final audioUri = M3u8Parser.separateAudioUri(chosen, M3u8Parser.parseRenditions(text, url));
+    return _Playlists(chosen.uri, variantText, audioUri == chosen.uri ? null : audioUri);
   }
 
   static HlsVariant? pickVariant(List<HlsVariant> variants, VariantPreference preference) {

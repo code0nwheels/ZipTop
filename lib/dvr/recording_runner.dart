@@ -46,6 +46,9 @@ class RecordingRunner {
   PlaybackSession? _session;
   FileCaptureSink? _sink;
 
+  /// What the capture had written when it was stopped early.
+  String? _stoppedContainer;
+
   /// Ends the recording early, keeping what has been captured.
   void stop({bool byUser = true}) {
     if (byUser) _stoppedByUser = true;
@@ -163,7 +166,8 @@ class RecordingRunner {
         case CaptureFailed(:final failure, :final message):
           await _finish(failure, message, outcome);
       }
-    } on CaptureCancelled {
+    } on CaptureCancelled catch (e) {
+      _stoppedContainer = e.container;
       final kick = _kickFailure;
       if (kick != null) {
         await _finish(kick, _kickMessage);
@@ -217,7 +221,7 @@ class RecordingRunner {
     final stop = clock();
     final bytes = outcome?.bytesWritten ?? sink?.bytesWritten ?? 0;
     final gaps = outcome?.gapCount ?? store.byId(recordingId)?.gapCount ?? 0;
-    final container = outcome?.container ?? 'ts';
+    final container = outcome?.container ?? _stoppedContainer ?? 'ts';
 
     // Give the file its real name now the container is known; an empty one
     // leaves no rubbish behind.
