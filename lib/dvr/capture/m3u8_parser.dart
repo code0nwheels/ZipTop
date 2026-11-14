@@ -3,10 +3,31 @@ import 'dart:typed_data';
 /// A deliberately small HLS playlist parser: only the tags a live recorder
 /// has to honour. Ported from the Android app's `M3u8Parser`.
 class HlsVariant {
-  const HlsVariant(this.uri, this.bandwidth, this.height);
+  const HlsVariant(this.uri, this.bandwidth, this.height, {this.audioGroup});
   final String uri;
   final int bandwidth;
   final int? height;
+
+  /// The GROUP-ID of the audio renditions this variant plays with, if any.
+  final String? audioGroup;
+}
+
+/// An `#EXT-X-MEDIA` entry of a master playlist.
+class HlsRendition {
+  const HlsRendition({
+    required this.type,
+    required this.groupId,
+    this.uri,
+    this.name,
+    this.isDefault = false,
+  });
+  final String type;
+  final String groupId;
+
+  /// Null when the rendition's media is carried in the variant stream itself.
+  final String? uri;
+  final String? name;
+  final bool isDefault;
 }
 
 class HlsKey {
@@ -83,11 +104,49 @@ abstract final class M3u8Parser {
         j++;
       }
       if (j < lines.length) {
-        variants.add(HlsVariant(resolve(baseUrl, lines[j].trim()), bandwidth, height));
+        variants.add(
+          HlsVariant(
+            resolve(baseUrl, lines[j].trim()),
+            bandwidth,
+            height,
+            audioGroup: attrs['AUDIO'],
+          ),
+        );
         i = j;
       }
     }
     return variants;
+  }
+
+  /// The `#EXT-X-MEDIA` renditions of a master playlist, URIs resolved
+  /// against [baseUrl].
+  static List<HlsRendition> parseRenditions(String text, String baseUrl) => [
+    for (final raw in _lines(text))
+      if (raw.trim().startsWith('#EXT-X-MEDIA:'))
+        if (parseAttributes(_afterColon(raw.trim())) case final attrs
+            when attrs['TYPE'] != null && attrs['GROUP-ID'] != null)
+          HlsRendition(
+            type: attrs['TYPE']!,
+            groupId: attrs['GROUP-ID']!,
+            uri: attrs['URI'] == null ? null : resolve(baseUrl, attrs['URI']!),
+            name: attrs['NAME'],
+            isDefault: attrs['DEFAULT']?.toUpperCase() == 'YES',
+          ),
+  ];
+
+  /// The audio playlist to record alongside [variant], or null when its
+  /// audio is muxed into the variant's own segments. A group whose default
+  /// rendition has no URI is audio the variant already carries.
+  static String? separateAudioUri(HlsVariant variant, List<HlsRendition> renditions) {
+    final group = variant.audioGroup;
+    if (group == null) return null;
+    final audio = [
+      for (final r in renditions)
+        if (r.type == 'AUDIO' && r.groupId == group) r,
+    ];
+    if (audio.isEmpty) return null;
+    final chosen = audio.firstWhere((r) => r.isDefault, orElse: () => audio.first);
+    return chosen.uri;
   }
 
   static HlsMediaPlaylist parseMedia(String text, String baseUrl) {
