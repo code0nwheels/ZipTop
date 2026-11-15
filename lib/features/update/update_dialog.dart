@@ -7,7 +7,9 @@ import '../../theme.dart';
 import 'update_service.dart';
 
 /// Offers an update, downloads it with progress, hands over to it, then asks
-/// [onInstall] to close the app so the update can take its place.
+/// [onInstall] to close the app so the update can take its place. The offer
+/// is checked with the server before each download, since it may be an old
+/// one remembered from before a later release.
 class UpdateDialog extends StatefulWidget {
   const UpdateDialog({
     super.key,
@@ -28,7 +30,9 @@ class UpdateDialog extends StatefulWidget {
 
 class _UpdateDialogState extends State<UpdateDialog> {
   final _cancel = CancelToken();
+  late UpdateInfo _update = widget.update;
   bool _downloading = false;
+  bool _upToDate = false;
   double? _progress;
   String? _error;
 
@@ -39,8 +43,18 @@ class _UpdateDialogState extends State<UpdateDialog> {
       _error = null;
     });
     try {
+      final latest = await widget.service.refresh(_update);
+      if (!mounted || _cancel.isCancelled) return;
+      if (latest == null) {
+        setState(() {
+          _downloading = false;
+          _upToDate = true;
+        });
+        return;
+      }
+      setState(() => _update = latest);
       final file = await widget.service.download(
-        widget.update,
+        _update,
         cancel: _cancel,
         onProgress: (fraction) {
           if (mounted) setState(() => _progress = fraction);
@@ -73,7 +87,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
   Widget build(BuildContext context) {
     final percent = _progress == null ? null : (_progress! * 100).round();
     return AlertDialog(
-      title: Text('ZipTop ${widget.update.version} is available'),
+      title: Text(_upToDate ? 'ZipTop is up to date' : 'ZipTop ${_update.version} is available'),
       content: ConstrainedBox(
         constraints: const BoxConstraints(minWidth: 360, maxWidth: 440),
         child: Column(
@@ -81,7 +95,9 @@ class _UpdateDialogState extends State<UpdateDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              _downloading
+              _upToDate
+                  ? 'You have ${widget.service.currentVersion}, the latest release.'
+                  : _downloading
                   ? 'Downloading${percent == null ? '…' : ' $percent%'}'
                   : 'You have ${widget.service.currentVersion}. ZipTop will close while the '
                       'update installs; anything being recorded will stop.\n\n'
@@ -101,12 +117,12 @@ class _UpdateDialogState extends State<UpdateDialog> {
       actions: [
         TextButton(
           onPressed: () {
-            if (!_downloading) widget.service.dismiss(widget.update);
+            if (!_downloading && !_upToDate) widget.service.dismiss(_update);
             Navigator.of(context).pop();
           },
-          child: Text(_downloading ? 'Cancel' : 'Later'),
+          child: Text(_downloading ? 'Cancel' : (_upToDate ? 'Close' : 'Later')),
         ),
-        if (!_downloading)
+        if (!_downloading && !_upToDate)
           FilledButton(
             onPressed: _start,
             child: Text(_error == null ? 'Update now' : 'Try again'),

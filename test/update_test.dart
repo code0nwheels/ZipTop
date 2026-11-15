@@ -324,6 +324,45 @@ void main() {
       ]);
     });
 
+    test('an offer remembered from before a later release is refreshed before downloading',
+        () async {
+      // 1.9.1 was offered and remembered; 1.10.0 has been published since, so
+      // the download path now gives 1.10.0's build, which 1.9.1's hash won't
+      // match.
+      final oldBuild = crypto.sha256.convert(utf8.encode('the 1.9.1 build')).toString();
+      settings.knownUpdate = (version: '1.9.1', url: '${server}ziptop/windows', sha256: oldBuild);
+      final stuck = serviceFor(adapter, settings,
+          platform: UpdatePlatform.windows, currentVersion: '1.9.0', clock: () => now);
+      final remembered = stuck.available.value!;
+      expect(remembered.version, '1.9.1');
+      await expectLater(stuck.download(remembered), throwsStateError);
+
+      adapter.body = release('1.10.0');
+      final latest = (await stuck.refresh(remembered))!;
+      expect(latest.version, '1.10.0');
+      expect(stuck.available.value?.version, '1.10.0');
+      expect(settings.knownUpdate?.version, '1.10.0');
+      final file = await stuck.download(latest);
+      addTearDown(() => file.delete());
+      expect(file.path, endsWith('ZipTop-Setup-1.10.0.exe'));
+    });
+
+    test('refreshing finds nothing once the release is installed', () async {
+      final offered = (await service.check())!;
+      adapter.body = release('1.2.0');
+      expect(await service.refresh(offered), isNull);
+      expect(service.available.value, isNull);
+    });
+
+    test('refreshing keeps the offer when the server cannot be asked', () async {
+      final offered = (await service.check())!;
+      adapter
+        ..status = 503
+        ..body = null;
+      expect(await service.refresh(offered), same(offered));
+      expect(service.available.value, same(offered));
+    });
+
     test('a check that finds nothing clears the update on offer', () async {
       await service.check();
       expect(service.available.value, isNotNull);
