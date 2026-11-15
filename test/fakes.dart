@@ -19,14 +19,31 @@ class FakeStreamsApi implements StreamsApi {
     if (limitError != null) throw limitError!;
   }
 
+  /// Scripted `ready` answers (a [StreamReadiness] or an error to throw),
+  /// popped in order. Once they run out: [ready], as running or stopped.
+  final readinesses = <Object>[];
+
+  /// What `ready` says once a start has gone through and the script is spent.
+  bool readyAfterStart = true;
+  bool _started = false;
+
   @override
-  Future<bool> isReady(String streamId) async {
+  Future<StreamReadiness> readiness(String streamId) async {
     calls.add('ready $streamId');
-    return ready;
+    if (readinesses.isNotEmpty) {
+      final next = readinesses.removeAt(0);
+      if (next is StreamReadiness) return next;
+      throw next;
+    }
+    final isReady = ready || (_started && readyAfterStart);
+    return StreamReadiness(ready: isReady, status: isReady || _started ? 'running' : 'stopped');
   }
 
   @override
-  Future<void> start(String streamId) async => calls.add('start $streamId');
+  Future<void> start(String streamId) async {
+    calls.add('start $streamId');
+    _started = true;
+  }
 
   @override
   Future<String> streamUrl(String streamId) async {

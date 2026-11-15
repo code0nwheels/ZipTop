@@ -54,7 +54,8 @@ enum SessionPhase {
 /// alongside playback, or the server drops the stream.
 ///
 /// Ported from the Android app's `PlayerViewModel`:
-/// `check-limit` → (IPTV only: `ready`, else `start` and wait 2 s) → `url` →
+/// `check-limit` → (IPTV only: `ready`, else `start` if nothing is running,
+/// then poll `ready` until it is) → `url` →
 /// one heartbeat before playback → a heartbeat every 20 s → on switch or exit,
 /// `leave` then `DELETE heartbeat`.
 ///
@@ -73,7 +74,8 @@ class PlaybackSession extends ChangeNotifier {
   static const kickRetryDelay = Duration(seconds: 2);
 
   static const heartbeatInterval = Duration(seconds: 20);
-  static const startWait = Duration(seconds: 2);
+  static const readyPollInterval = Duration(seconds: 1);
+  static const readyTimeout = Duration(seconds: 45);
   static const leaveTimeout = Duration(seconds: 2);
   static const evictedMessage =
       'This session was ended because you opened a stream on another device';
@@ -195,23 +197,28 @@ class PlaybackSession extends ChangeNotifier {
       if (stale()) return;
 
       if (iptv) {
-        var ready = true;
+        StreamReadiness? readiness;
         try {
-          ready = await _api.isReady(streamId);
+          readiness = await _api.readiness(streamId);
+        } on NotEntitledException {
+          rethrow;
         } catch (_) {
           // If the ready check fails, try for the URL anyway.
         }
         if (stale()) return;
-        if (!ready) {
-          try {
-            await _api.start(streamId);
-          } on NotEntitledException {
-            rethrow;
-          } catch (e) {
-            throw ApiException('Failed to start stream: $e');
+        if (readiness != null && !readiness.ready) {
+          _refuseIfUnplayable(readiness);
+          if (readiness.needsStart) {
+            try {
+              await _api.start(streamId);
+            } on NotEntitledException {
+              rethrow;
+            } catch (e) {
+              throw ApiException('Failed to start stream: $e');
+            }
+            if (stale()) return;
           }
-          if (stale()) return;
-          await Future<void>.delayed(startWait);
+          await _waitUntilReady(stale, streamId);
           if (stale()) return;
         }
       }
@@ -263,6 +270,42 @@ class PlaybackSession extends ChangeNotifier {
     } catch (e) {
       if (stale()) return;
       _set(SessionPhase.failed, message: e.toString());
+    }
+  }
+
+  static void _refuseIfUnplayable(StreamReadiness readiness) {
+    if (readiness.unplayable) {
+      throw ApiException(readiness.message ?? 'This channel is not available right now');
+    }
+  }
+
+  /// Polls `ready` until the channel's playlist has segments. A started IPTV
+  /// channel takes several seconds: FFmpeg has to reach the provider and
+  /// nginx-rtmp has to cut a first segment from a keyframe. Playing before
+  /// then gets a 404 for the playlist, and the reload that follows used to
+  /// start (and so restart) FFmpeg again, so the channel never came up.
+  ///
+  /// Never starts the stream itself: right after a start the server can
+  /// briefly read `stopped`. Gives up quietly at [readyTimeout] and lets the
+  /// URL and the player's own retries take it from there.
+  Future<void> _waitUntilReady(bool Function() stale, String streamId) async {
+    // Counted in polls rather than wall-clock time, which tests can't fake.
+    final polls = readyTimeout.inMilliseconds ~/ readyPollInterval.inMilliseconds;
+    for (var i = 0; i < polls; i++) {
+      await Future<void>.delayed(readyPollInterval);
+      if (stale()) return;
+      StreamReadiness readiness;
+      try {
+        readiness = await _api.readiness(streamId);
+      } on NotEntitledException {
+        rethrow;
+      } catch (_) {
+        // A missed poll (rate limit, network) is not an answer; ask again.
+        continue;
+      }
+      if (stale()) return;
+      if (readiness.ready) return;
+      _refuseIfUnplayable(readiness);
     }
   }
 

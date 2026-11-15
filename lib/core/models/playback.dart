@@ -113,6 +113,28 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+/// What `GET /api/viewer/streams/<id>/ready` said about an IPTV channel.
+class StreamReadiness {
+  const StreamReadiness({required this.ready, this.status, this.paused = false, this.message});
+
+  /// The channel's HLS playlist has segments: it can be played now.
+  final bool ready;
+
+  /// The server's process status: `running`, `stopped`, `paused`, `error`,
+  /// or `unavailable` / `disabled` for a channel that cannot be played.
+  final String? status;
+  final bool paused;
+  final String? message;
+
+  /// The channel can't be played however long we wait.
+  bool get unplayable => status == 'unavailable' || status == 'disabled';
+
+  /// Nothing is running for it, so it needs `POST /start`. `running` (FFmpeg
+  /// launched, playlist not written yet) only needs waiting for: asking
+  /// again would restart FFmpeg on servers that don't guard against it.
+  bool get needsStart => !ready && !unplayable && (paused || status != 'running');
+}
+
 enum KickReason { watchTimeExceeded, other }
 
 /// What a heartbeat told us about the session.
