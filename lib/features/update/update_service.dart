@@ -280,6 +280,22 @@ class UpdateService {
     }
   }
 
+  /// What to download in place of [offered], asked of the server just before
+  /// downloading. An offer can be remembered from hours or days ago (the
+  /// sidebar's Update button, the offer restored at start-up), while the
+  /// server's download path always gives its newest build: once a later
+  /// release is out, the remembered hash no longer matches what comes down
+  /// and the download is thrown away every time. Returns the server's current
+  /// offer, null when there is nothing left to install, or [offered] itself
+  /// when the server can't be asked (the download then shows why).
+  Future<UpdateInfo?> refresh(UpdateInfo offered) async {
+    try {
+      return await check();
+    } catch (_) {
+      return offered;
+    }
+  }
+
   void dismiss(UpdateInfo update) => settings.dismissedUpdateVersion = update.version;
 
   /// Downloads the update: on Windows the installer, to the temp folder; on
