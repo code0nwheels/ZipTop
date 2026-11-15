@@ -12,6 +12,7 @@ import '../../dvr/models.dart';
 import '../../player/mpv_player.dart';
 import '../../theme.dart';
 import '../../ui/stats_overlay.dart';
+import '../../ui/wheel_volume.dart';
 
 String formatPosition(Duration d) {
   String two(int n) => n.toString().padLeft(2, '0');
@@ -144,6 +145,12 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
 
   void _toggleStats() => setState(() => _stats = !_stats);
 
+  /// Keeps the shared volume, so live TV picks up where this left it.
+  void _setVolume(double volume) {
+    widget.settings.volume = volume;
+    unawaited(_player.setVolume(widget.settings.volume));
+  }
+
   void _seekBy(Duration delta) {
     var target = _position + delta;
     if (target < Duration.zero) target = Duration.zero;
@@ -195,202 +202,208 @@ class _RecordingPlayerViewState extends State<RecordingPlayerView> {
     final value = (_dragging ?? _position.inMilliseconds.toDouble()).clamp(0.0, max <= 0 ? 0.0 : max);
     final showControls = _controls || !_playing || _error != null;
 
-    return Focus(
-      focusNode: _focus,
-      onKeyEvent: _onKey,
-      child: MouseRegion(
-        cursor: showControls ? SystemMouseCursors.basic : SystemMouseCursors.none,
-        onHover: (_) => _touch(),
-        child: Listener(
-          // Read straight from the pointer so a right-click never waits on,
-          // or loses to, the tap and double-tap recognisers.
-          onPointerDown: (event) {
-            if (event.buttons & kSecondaryMouseButton != 0) {
-              _touch();
-              unawaited(showStatsMenu(
-                context,
-                event.position,
-                on: _stats,
-                onToggle: _toggleStats,
-              ));
-            }
-          },
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              _focus.requestFocus();
-              _touch();
+    return WheelVolume(
+      volume: () => widget.settings.volume,
+      onChanged: _setVolume,
+      onActivity: _touch,
+      compact: widget.mini,
+      child: Focus(
+        focusNode: _focus,
+        onKeyEvent: _onKey,
+        child: MouseRegion(
+          cursor: showControls ? SystemMouseCursors.basic : SystemMouseCursors.none,
+          onHover: (_) => _touch(),
+          child: Listener(
+            // Read straight from the pointer so a right-click never waits on,
+            // or loses to, the tap and double-tap recognisers.
+            onPointerDown: (event) {
+              if (event.buttons & kSecondaryMouseButton != 0) {
+                _touch();
+                unawaited(showStatsMenu(
+                  context,
+                  event.position,
+                  on: _stats,
+                  onToggle: _toggleStats,
+                ));
+              }
             },
-            // Popped out, a double-click goes back to the full window.
-            onDoubleTap: widget.mini ? widget.onToggleMini : widget.onToggleFullscreen,
-            child: ColoredBox(
-              color: Colors.black,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  _mpv.view(),
-                  if (_stats)
-                    StatsOverlay(
-                      read: _mpv.readStats,
-                      onClose: _toggleStats,
-                      compact: widget.mini,
-                      // Clear of the title bar and its back button.
-                      top: !widget.mini && showControls ? 56 : 0,
-                    ),
-                  if (_error != null)
-                    ColoredBox(
-                      color: ZipColors.overlayPlayer,
-                      child: Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(
-                            _error!,
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.titleMedium,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                _focus.requestFocus();
+                _touch();
+              },
+              // Popped out, a double-click goes back to the full window.
+              onDoubleTap: widget.mini ? widget.onToggleMini : widget.onToggleFullscreen,
+              child: ColoredBox(
+                color: Colors.black,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _mpv.view(),
+                    if (_stats)
+                      StatsOverlay(
+                        read: _mpv.readStats,
+                        onClose: _toggleStats,
+                        compact: widget.mini,
+                        // Clear of the title bar and its back button.
+                        top: !widget.mini && showControls ? 56 : 0,
+                      ),
+                    if (_error != null)
+                      ColoredBox(
+                        color: ZipColors.overlayPlayer,
+                        child: Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              _error!,
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  AnimatedOpacity(
-                    opacity: showControls ? 1 : 0,
-                    duration: ZipMotion.fast,
-                    child: IgnorePointer(
-                      ignoring: !showControls,
-                      child: Column(
-                        children: [
-                          if (!widget.mini)
+                    AnimatedOpacity(
+                      opacity: showControls ? 1 : 0,
+                      duration: ZipMotion.fast,
+                      child: IgnorePointer(
+                        ignoring: !showControls,
+                        child: Column(
+                          children: [
+                            if (!widget.mini)
+                              Container(
+                                padding: const EdgeInsets.fromLTRB(8, 8, 16, 32),
+                                decoration: const BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [Color(0xD9000000), Color(0x66000000), Colors.transparent],
+                                    stops: [0, 0.5, 1],
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    IconButton(
+                                      tooltip: 'Back to recordings (Esc)',
+                                      onPressed: widget.onClose,
+                                      icon: const Icon(Icons.arrow_back),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Expanded(
+                                      child: Text.rich(
+                                        TextSpan(
+                                          text: r.title,
+                                          children: [
+                                            TextSpan(
+                                              text: '   ${r.streamName}',
+                                              style: const TextStyle(
+                                                color: ZipColors.textSecondary,
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 14,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: Theme.of(context).textTheme.titleMedium,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            const Spacer(),
                             Container(
-                              padding: const EdgeInsets.fromLTRB(8, 8, 16, 32),
+                              padding: const EdgeInsets.fromLTRB(12, 40, 12, 8),
                               decoration: const BoxDecoration(
+                                // The web player's scrim: .85 black at the bottom, .4 halfway.
                                 gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
+                                  begin: Alignment.bottomCenter,
+                                  end: Alignment.topCenter,
                                   colors: [Color(0xD9000000), Color(0x66000000), Colors.transparent],
                                   stops: [0, 0.5, 1],
                                 ),
                               ),
                               child: Row(
                                 children: [
+                                  if (!widget.mini)
+                                    IconButton(
+                                      tooltip: 'Back 30 seconds (Left)',
+                                      onPressed: () => _seekBy(-seekStep),
+                                      icon: const Icon(Icons.replay_30),
+                                    ),
                                   IconButton(
-                                    tooltip: 'Back to recordings (Esc)',
-                                    onPressed: widget.onClose,
-                                    icon: const Icon(Icons.arrow_back),
+                                    tooltip: _playing ? 'Pause (Space)' : 'Play (Space)',
+                                    iconSize: 28,
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: ZipColors.accent,
+                                      foregroundColor: ZipColors.onAccent,
+                                      hoverColor: ZipColors.accentHi,
+                                      fixedSize: const Size(48, 48),
+                                    ),
+                                    onPressed: _player.playOrPause,
+                                    icon: Icon(_playing ? Icons.pause_rounded : Icons.play_arrow_rounded),
                                   ),
-                                  const SizedBox(width: 4),
+                                  if (!widget.mini)
+                                    IconButton(
+                                      tooltip: 'Forward 30 seconds (Right)',
+                                      onPressed: () => _seekBy(seekStep),
+                                      icon: const Icon(Icons.forward_30),
+                                    ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    formatPosition(Duration(milliseconds: value.round())),
+                                    style: ZipText.mono(fontSize: 13, color: ZipColors.text),
+                                  ),
                                   Expanded(
-                                    child: Text.rich(
-                                      TextSpan(
-                                        text: r.title,
-                                        children: [
-                                          TextSpan(
-                                            text: '   ${r.streamName}',
-                                            style: const TextStyle(
-                                              color: ZipColors.textSecondary,
-                                              fontWeight: FontWeight.w600,
-                                              fontSize: 14,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context).textTheme.titleMedium,
+                                    child: Slider(
+                                      value: value,
+                                      max: max <= 0 ? 1 : max,
+                                      onChanged: max <= 0
+                                          ? null
+                                          : (v) {
+                                              setState(() => _dragging = v);
+                                              _touch();
+                                            },
+                                      onChangeEnd: (v) {
+                                        final target = Duration(milliseconds: v.round());
+                                        setState(() {
+                                          _dragging = null;
+                                          _position = target;
+                                          _ended = false;
+                                        });
+                                        unawaited(_player.seek(target));
+                                      },
+                                    ),
+                                  ),
+                                  Text(
+                                    _duration == Duration.zero ? '--:--' : formatPosition(_duration),
+                                    style: ZipText.mono(fontSize: 13),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  IconButton(
+                                    tooltip: widget.mini ? 'Back to full window (P)' : 'Pop out (P)',
+                                    onPressed: widget.onToggleMini,
+                                    icon: Icon(
+                                      widget.mini ? Icons.open_in_full : Icons.picture_in_picture_alt,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: widget.fullscreen ? 'Exit full screen (Esc)' : 'Full screen (F)',
+                                    onPressed: widget.onToggleFullscreen,
+                                    icon: Icon(
+                                      widget.fullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                          const Spacer(),
-                          Container(
-                            padding: const EdgeInsets.fromLTRB(12, 40, 12, 8),
-                            decoration: const BoxDecoration(
-                              // The web player's scrim: .85 black at the bottom, .4 halfway.
-                              gradient: LinearGradient(
-                                begin: Alignment.bottomCenter,
-                                end: Alignment.topCenter,
-                                colors: [Color(0xD9000000), Color(0x66000000), Colors.transparent],
-                                stops: [0, 0.5, 1],
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                if (!widget.mini)
-                                  IconButton(
-                                    tooltip: 'Back 30 seconds (Left)',
-                                    onPressed: () => _seekBy(-seekStep),
-                                    icon: const Icon(Icons.replay_30),
-                                  ),
-                                IconButton(
-                                  tooltip: _playing ? 'Pause (Space)' : 'Play (Space)',
-                                  iconSize: 28,
-                                  style: IconButton.styleFrom(
-                                    backgroundColor: ZipColors.accent,
-                                    foregroundColor: ZipColors.onAccent,
-                                    hoverColor: ZipColors.accentHi,
-                                    fixedSize: const Size(48, 48),
-                                  ),
-                                  onPressed: _player.playOrPause,
-                                  icon: Icon(_playing ? Icons.pause_rounded : Icons.play_arrow_rounded),
-                                ),
-                                if (!widget.mini)
-                                  IconButton(
-                                    tooltip: 'Forward 30 seconds (Right)',
-                                    onPressed: () => _seekBy(seekStep),
-                                    icon: const Icon(Icons.forward_30),
-                                  ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  formatPosition(Duration(milliseconds: value.round())),
-                                  style: ZipText.mono(fontSize: 13, color: ZipColors.text),
-                                ),
-                                Expanded(
-                                  child: Slider(
-                                    value: value,
-                                    max: max <= 0 ? 1 : max,
-                                    onChanged: max <= 0
-                                        ? null
-                                        : (v) {
-                                            setState(() => _dragging = v);
-                                            _touch();
-                                          },
-                                    onChangeEnd: (v) {
-                                      final target = Duration(milliseconds: v.round());
-                                      setState(() {
-                                        _dragging = null;
-                                        _position = target;
-                                        _ended = false;
-                                      });
-                                      unawaited(_player.seek(target));
-                                    },
-                                  ),
-                                ),
-                                Text(
-                                  _duration == Duration.zero ? '--:--' : formatPosition(_duration),
-                                  style: ZipText.mono(fontSize: 13),
-                                ),
-                                const SizedBox(width: 8),
-                                IconButton(
-                                  tooltip: widget.mini ? 'Back to full window (P)' : 'Pop out (P)',
-                                  onPressed: widget.onToggleMini,
-                                  icon: Icon(
-                                    widget.mini ? Icons.open_in_full : Icons.picture_in_picture_alt,
-                                  ),
-                                ),
-                                IconButton(
-                                  tooltip: widget.fullscreen ? 'Exit full screen (Esc)' : 'Full screen (F)',
-                                  onPressed: widget.onToggleFullscreen,
-                                  icon: Icon(
-                                    widget.fullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
