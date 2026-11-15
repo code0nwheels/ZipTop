@@ -68,12 +68,19 @@ class StreamsApi {
     throw ApiException('Check limit failed: ${res.statusCode}', status: res.statusCode);
   }
 
-  Future<bool> isReady(String streamId) async {
+  Future<StreamReadiness> readiness(String streamId) async {
     final res = await _client.get('api/viewer/streams/${_id(streamId)}/ready');
+    _refuseIfNotEntitled(res);
     if (!res.ok) {
       throw ApiException('Ready check failed: ${res.statusCode}', status: res.statusCode);
     }
-    return asBool(res.json?['ready']) ?? false;
+    final json = res.json;
+    return StreamReadiness(
+      ready: asBool(json?['ready']) ?? false,
+      status: asString(json?['status']),
+      paused: asBool(json?['paused']) ?? false,
+      message: asString(json?['message']),
+    );
   }
 
   Future<void> start(String streamId) async {

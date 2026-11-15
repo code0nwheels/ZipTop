@@ -25,18 +25,107 @@ void main() {
     });
   });
 
-  test('an IPTV channel that is not ready is started, then given 2 s', () {
+  test('a stopped IPTV channel is started once, then played when ready says so', () {
     fakeAsync((async) {
       api.ready = false;
+      api.readinesses.addAll(const [
+        StreamReadiness(ready: false, status: 'stopped'),
+        // FFmpeg is up but nginx-rtmp has no playlist yet; right after a
+        // start the server can even read stopped for a moment.
+        StreamReadiness(ready: false, status: 'stopped'),
+        StreamReadiness(ready: false, status: 'running'),
+        StreamReadiness(ready: false, status: 'running'),
+        StreamReadiness(ready: true, status: 'running'),
+      ]);
       session.open('s-1', iptv: true);
       async.flushMicrotasks();
 
       expect(api.calls, ['limit s-1', 'ready s-1', 'start s-1']);
       expect(session.phase, SessionPhase.preparing);
 
-      async.elapse(const Duration(seconds: 2));
-      expect(api.calls.sublist(3), ['url s-1', 'beat s-1']);
+      async.elapse(const Duration(seconds: 3));
+      expect(session.phase, SessionPhase.preparing, reason: 'no URL before the playlist exists');
+      expect(api.calls.any((c) => c.startsWith('url')), isFalse);
+
+      async.elapse(const Duration(seconds: 1));
+      expect(api.calls.where((c) => c == 'start s-1'), hasLength(1));
+      expect(api.calls.sublist(api.calls.length - 2), ['url s-1', 'beat s-1']);
       expect(session.phase, SessionPhase.playing);
+    });
+  });
+
+  test('an IPTV channel that is already coming up is waited for, not restarted', () {
+    fakeAsync((async) {
+      api.readinesses.addAll(const [
+        StreamReadiness(ready: false, status: 'running'),
+        StreamReadiness(ready: true, status: 'running'),
+      ]);
+      session.open('s-1', iptv: true);
+      async.elapse(const Duration(seconds: 1));
+
+      expect(api.calls, ['limit s-1', 'ready s-1', 'ready s-1', 'url s-1', 'beat s-1']);
+      expect(session.phase, SessionPhase.playing);
+    });
+  });
+
+  test('a paused IPTV channel is started', () {
+    fakeAsync((async) {
+      api.readinesses.add(const StreamReadiness(ready: false, status: 'running', paused: true));
+      session.open('s-1', iptv: true);
+      async.elapse(const Duration(seconds: 1));
+
+      expect(api.calls.take(3), ['limit s-1', 'ready s-1', 'start s-1']);
+      expect(session.phase, SessionPhase.playing);
+    });
+  });
+
+  test('a reload while the channel comes up does not start it again', () {
+    fakeAsync((async) {
+      api.ready = false;
+      api.readyAfterStart = false;
+      session.open('s-1', iptv: true);
+      async.elapse(PlaybackSession.readyTimeout);
+      // Still not ready after the wait: the URL is tried anyway and the
+      // player's own retries take over.
+      expect(session.phase, SessionPhase.playing);
+      api.calls.clear();
+
+      session.reopen();
+      async.elapse(const Duration(seconds: 5));
+      expect(api.calls.contains('start s-1'), isFalse);
+      expect(api.calls.where((c) => c == 'ready s-1'), hasLength(6));
+    });
+  });
+
+  test('missed ready polls are retried', () {
+    fakeAsync((async) {
+      api.readinesses.addAll([
+        const StreamReadiness(ready: false, status: 'running'),
+        const ApiException('Ready check failed: 429', status: 429),
+        const StreamReadiness(ready: true, status: 'running'),
+      ]);
+      session.open('s-1', iptv: true);
+      async.elapse(const Duration(seconds: 2));
+      expect(session.phase, SessionPhase.playing);
+    });
+  });
+
+  test('an IPTV channel the server says is unavailable fails with its message', () {
+    fakeAsync((async) {
+      api.readinesses.addAll(const [
+        StreamReadiness(ready: false, status: 'stopped'),
+        StreamReadiness(
+          ready: false,
+          status: 'unavailable',
+          message: 'Stream not available. The source URL returned a 404 error.',
+        ),
+      ]);
+      session.open('s-1', iptv: true);
+      async.elapse(const Duration(seconds: 5));
+
+      expect(session.phase, SessionPhase.failed);
+      expect(session.message, contains('source URL returned a 404'));
+      expect(api.calls.any((c) => c.startsWith('url')), isFalse);
     });
   });
 
