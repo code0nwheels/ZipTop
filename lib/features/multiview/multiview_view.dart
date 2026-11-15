@@ -6,6 +6,7 @@ import '../../theme.dart';
 import '../../ui/ch_num_chip.dart';
 import '../../ui/segmented_pills.dart';
 import '../../ui/stats_overlay.dart';
+import '../../ui/wheel_volume.dart';
 import '../../ui/zip_spinner.dart';
 import 'channel_picker_dialog.dart';
 import 'multiview_controller.dart';
@@ -69,58 +70,63 @@ class MultiviewView extends StatelessWidget {
               Expanded(
                 child: tiles.isEmpty
                     ? _empty(context)
-                    : Padding(
-                        padding: EdgeInsets.all(fullscreen ? 0 : 6),
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            final rects = layoutTiles(
-                              full == null ? controller.layout : MultiLayout.grid,
-                              shown.length,
-                              constraints.biggest,
-                            );
-                            return Stack(
-                              children: [
-                                for (var i = 0; i < shown.length; i++)
-                                  AnimatedPositioned(
-                                    key: ValueKey(shown[i].id),
-                                    duration: const Duration(milliseconds: 180),
-                                    curve: Curves.easeOut,
-                                    left: rects[i].left,
-                                    top: rects[i].top,
-                                    width: rects[i].width,
-                                    height: rects[i].height,
-                                    child: Padding(
-                                      padding: EdgeInsets.all(fullscreen ? 1 : 4),
-                                      child: _Tile(
-                                        controller: controller,
-                                        tile: shown[i],
-                                        selected: controller.selected == shown[i],
-                                        isFull: full != null,
-                                        rounded: !fullscreen,
-                                        onChange: () => _change(context, shown[i]),
-                                        onAdd: controller.canAdd
-                                            ? () => _add(context)
-                                            : null,
-                                        onInteraction: onInteraction,
+                    // The wheel sets the volume of the screen you hear.
+                    : WheelVolume(
+                        volume: () => controller.settings.volume,
+                        onChanged: (volume) => controller.settings.volume = volume,
+                        child: Padding(
+                          padding: EdgeInsets.all(fullscreen ? 0 : 6),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final rects = layoutTiles(
+                                full == null ? controller.layout : MultiLayout.grid,
+                                shown.length,
+                                constraints.biggest,
+                              );
+                              return Stack(
+                                children: [
+                                  for (var i = 0; i < shown.length; i++)
+                                    AnimatedPositioned(
+                                      key: ValueKey(shown[i].id),
+                                      duration: const Duration(milliseconds: 180),
+                                      curve: Curves.easeOut,
+                                      left: rects[i].left,
+                                      top: rects[i].top,
+                                      width: rects[i].width,
+                                      height: rects[i].height,
+                                      child: Padding(
+                                        padding: EdgeInsets.all(fullscreen ? 1 : 4),
+                                        child: _Tile(
+                                          controller: controller,
+                                          tile: shown[i],
+                                          selected: controller.selected == shown[i],
+                                          isFull: full != null,
+                                          rounded: !fullscreen,
+                                          onChange: () => _change(context, shown[i]),
+                                          onAdd: controller.canAdd
+                                              ? () => _add(context)
+                                              : null,
+                                          onInteraction: onInteraction,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                if (tiles.length == 1 && full == null)
-                                  Positioned(
-                                    left: 0,
-                                    right: 0,
-                                    bottom: 20,
-                                    child: Center(
-                                      child: FilledButton.icon(
-                                        onPressed: () => _add(context),
-                                        icon: const Icon(Icons.add),
-                                        label: const Text('Add more screens'),
+                                  if (tiles.length == 1 && full == null)
+                                    Positioned(
+                                      left: 0,
+                                      right: 0,
+                                      bottom: 20,
+                                      child: Center(
+                                        child: FilledButton.icon(
+                                          onPressed: () => _add(context),
+                                          icon: const Icon(Icons.add),
+                                          label: const Text('Add more screens'),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                              ],
-                            );
-                          },
+                                ],
+                              );
+                            },
+                          ),
                         ),
                       ),
               ),
