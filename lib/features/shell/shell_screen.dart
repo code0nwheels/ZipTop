@@ -916,6 +916,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> with WindowListener, 
               onToggleFullscreen: () => _setFullscreen(!_fullscreen),
               onToggleMini: () => _setMini(!_mini),
               onSeePlans: _openPlans,
+              reportProblem: ref.read(streamsV2ApiProvider).reportProblem,
             );
             final panel = ChannelPanel(
               live: _live,

@@ -64,6 +64,36 @@ class StreamsV2Api {
     return FavoritesResult.fromJson(json);
   }
 
+  static const reportFailed = "Couldn't send the report.";
+  static const reportRateLimited =
+      "You've sent a lot of reports recently. Try again a little later.";
+
+  /// Tells the admins something is wrong with [streamId]. A refreshed earlier
+  /// report (`200`, `created: false`) counts as success like a new one.
+  ///
+  /// Throws [ApiException] with text fit to show the viewer.
+  Future<ReportResult> reportProblem(String streamId, ProblemReport report) async {
+    final res = await _client.send(
+      'POST',
+      'api/v2/streams/${Uri.encodeComponent(streamId)}/report',
+      data: report.toJson(),
+      headers: {'Content-Type': 'application/json'},
+    );
+    final json = res.json;
+    if (res.ok && json != null) return ReportResult.fromJson(json);
+    throw ApiException(reportFailureMessage(res), status: res.statusCode);
+  }
+
+  /// Older servers without the endpoint answer 404 or 405 with no v2 error
+  /// body (Flask's own pages), so they get the generic text.
+  static String reportFailureMessage(Response<dynamic> res) {
+    final status = res.statusCode;
+    if (status == 429 || res.errorCode == 'rate_limited') return reportRateLimited;
+    if (res.ok || status == 405) return reportFailed;
+    final message = res.errorMessage?.trim();
+    return message == null || message.isEmpty ? reportFailed : message;
+  }
+
   Future<CategoryPrefs> preferences() async {
     final res = await _client.get('api/v2/categories/preferences');
     final json = res.json;

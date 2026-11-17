@@ -372,3 +372,54 @@ class CategoryPrefsUpdate {
         if (show != null) 'show': show,
       };
 }
+
+/// What a viewer can say is wrong with a channel, for
+/// `POST api/v2/streams/{id}/report`.
+enum IssueType {
+  down('down', "Stream down or won't load"),
+  wrongChannel('wrong_channel', 'Wrong channel or content'),
+  buffering('buffering', 'Buffering or stuttering'),
+  audioVideo('audio_video', 'Audio or video problem'),
+  other('other', 'Something else');
+
+  const IssueType(this.wire, this.label);
+
+  /// The `issue_type` the server expects.
+  final String wire;
+  final String label;
+}
+
+/// `POST api/v2/streams/{id}/report` body. The server keeps at most 500
+/// characters of the note; a blank one is sent as null.
+class ProblemReport {
+  const ProblemReport(this.issueType, {this.note});
+
+  static const maxNoteLength = 500;
+
+  final IssueType issueType;
+  final String? note;
+
+  Json toJson() {
+    var text = note?.trim();
+    if (text != null && text.length > maxNoteLength) text = text.substring(0, maxNoteLength);
+    return {'issue_type': issueType.wire, 'note': text == null || text.isEmpty ? null : text};
+  }
+}
+
+/// The answer to a report: `201` for a new one, `200` with `created: false`
+/// when it refreshed the viewer's open report of the same issue.
+class ReportResult {
+  const ReportResult({this.reportId, this.streamId, this.issueType, this.created = true});
+
+  factory ReportResult.fromJson(Json json) => ReportResult(
+        reportId: asInt(json['report_id']),
+        streamId: asString(json['stream_id']),
+        issueType: asString(json['issue_type']),
+        created: asBool(json['created']) ?? true,
+      );
+
+  final int? reportId;
+  final String? streamId;
+  final String? issueType;
+  final bool created;
+}
