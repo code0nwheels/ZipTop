@@ -16,6 +16,7 @@ import '../../ui/stats_overlay.dart';
 import '../../ui/wheel_volume.dart';
 import '../../ui/zip_spinner.dart';
 import 'channel_panel.dart' show nowPlayingProgress;
+import 'report_dialog.dart';
 import '../recordings/record_actions.dart';
 import 'live_controller.dart';
 
@@ -35,6 +36,7 @@ class VideoPane extends StatefulWidget {
     required this.onActivity,
     required this.controlsVisible,
     this.onSeePlans,
+    this.reportProblem,
   });
 
   final LiveController live;
@@ -55,21 +57,39 @@ class VideoPane extends StatefulWidget {
   /// Opens the plans page, offered when the plan doesn't include a channel.
   final VoidCallback? onSeePlans;
 
+  /// Sends a problem report; null hides "Report a problem".
+  final ReportSender? reportProblem;
+
   @override
   State<VideoPane> createState() => _VideoPaneState();
 }
 
 class _VideoPaneState extends State<VideoPane> {
+  /// "Report a problem" for [channel], or null where it isn't offered: no
+  /// channel, no sender, or the mini player (too small for the dialog).
+  VoidCallback? _reporter(Channel? channel, {IssueType? initial}) {
+    final send = widget.reportProblem;
+    if (channel == null || send == null || widget.mini) return null;
+    return () => showReportProblemDialog(context, channel: channel, send: send, initial: initial);
+  }
+
   @override
   Widget build(BuildContext context) {
     final live = widget.live;
     final session = live.session;
     final channel = live.current;
     final warning = session.warningSeconds;
+    // On the channel-won't-start notices, offered with "down" picked.
+    final reportDown = _reporter(channel, initial: IssueType.down);
 
     Widget? notice;
     if (live.failure != null) {
-      notice = _Notice(message: live.failure!, action: 'Retry', onAction: live.retryNow);
+      notice = _Notice(
+        message: live.failure!,
+        action: 'Retry',
+        onAction: live.retryNow,
+        onReport: reportDown,
+      );
     } else {
       notice = switch (session.phase) {
         SessionPhase.preparing => const Center(child: ZipSpinner(size: 52)),
@@ -77,6 +97,7 @@ class _VideoPaneState extends State<VideoPane> {
             message: session.message ?? 'Could not start this channel.',
             action: 'Retry',
             onAction: live.retryNow,
+            onReport: reportDown,
           ),
         SessionPhase.streamLimit => _Notice(
             message: session.message ?? 'Stream limit reached.',
@@ -183,6 +204,7 @@ class _VideoPaneState extends State<VideoPane> {
                           onToggleFullscreen: widget.onToggleFullscreen,
                           mini: widget.mini,
                           onToggleMini: widget.onToggleMini,
+                          onReport: _reporter(channel),
                         ),
                       ),
                     ),
@@ -252,6 +274,7 @@ class _ControlBar extends StatelessWidget {
     required this.onToggleFullscreen,
     required this.mini,
     required this.onToggleMini,
+    this.onReport,
   });
 
   final LiveController live;
@@ -264,6 +287,9 @@ class _ControlBar extends StatelessWidget {
   /// The mini player keeps only the channel, mute and the way back.
   final bool mini;
   final VoidCallback onToggleMini;
+
+  /// Opens "Report a problem" for the channel on screen.
+  final VoidCallback? onReport;
 
   @override
   Widget build(BuildContext context) {
@@ -372,6 +398,12 @@ class _ControlBar extends StatelessWidget {
               ),
             ),
           if (channel != null && !mini) RecordButton(dvr: dvr, guide: guide, channel: channel),
+          if (onReport != null)
+            IconButton(
+              tooltip: 'Report a problem',
+              onPressed: onReport,
+              icon: const Icon(Icons.outlined_flag),
+            ),
           if (!mini && live.remote == null)
             ValueListenableBuilder<MediaTracks>(
               valueListenable: player.tracks,
@@ -813,11 +845,14 @@ class _NumberPill extends StatelessWidget {
 }
 
 class _Notice extends StatelessWidget {
-  const _Notice({required this.message, this.action, this.onAction});
+  const _Notice({required this.message, this.action, this.onAction, this.onReport});
 
   final String message;
   final String? action;
   final VoidCallback? onAction;
+
+  /// Adds "Report a problem" beside the action.
+  final VoidCallback? onReport;
 
   @override
   Widget build(BuildContext context) {
@@ -832,9 +867,18 @@ class _Notice extends StatelessWidget {
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            if (action != null) ...[
+            if (action != null || onReport != null) ...[
               const SizedBox(height: 16),
-              FilledButton(onPressed: onAction, child: Text(action!)),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 12,
+                runSpacing: 8,
+                children: [
+                  if (action != null) FilledButton(onPressed: onAction, child: Text(action!)),
+                  if (onReport != null)
+                    OutlinedButton(onPressed: onReport, child: const Text('Report a problem')),
+                ],
+              ),
             ],
           ],
         ),
