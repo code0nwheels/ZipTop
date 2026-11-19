@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ziptop/dvr/capture/m3u8_parser.dart';
 import 'package:ziptop/player/mpv_player.dart';
 
 void main() {
@@ -125,6 +126,55 @@ https://cdn.example/api/hls/abc/tok/ch1/safari/variant/hi.m3u8
     expect(formatBitrate(836280), '836 kbps');
     expect(const StreamVariant(bitrate: 2149280, height: 720).label, '720p  ·  2.1 Mbps');
     expect(const StreamVariant(bitrate: 2149280).label, '2.1 Mbps');
+  });
+
+  group('live start index', () {
+    // A live window of [count] segments, each [seconds] long.
+    HlsMediaPlaylist live(int count, {double seconds = 3.003, bool ended = false}) =>
+        M3u8Parser.parseMedia(
+          [
+            '#EXTM3U',
+            '#EXT-X-TARGETDURATION:4',
+            '#EXT-X-MEDIA-SEQUENCE:3479',
+            for (var i = 0; i < count; i++) ...['#EXTINF:$seconds,', 'seg$i.ts'],
+            if (ended) '#EXT-X-ENDLIST',
+          ].join('\n'),
+          'https://example.test/live/video.m3u8',
+        );
+
+    test('starts far enough back to hold the read ahead', () {
+      expect(liveStartIndex(live(20), 30), -10);
+      expect(liveStartIndex(live(20), 20), -7);
+      expect(liveStartIndex(live(20, seconds: 6), 30), -5);
+    });
+
+    test('never starts closer to live than FFmpeg would', () {
+      expect(liveStartIndex(live(20), 4), -3);
+      expect(liveStartIndex(live(20, seconds: 10), 10), -3);
+    });
+
+    test('keeps clear of the oldest segments', () {
+      expect(liveStartIndex(live(20), 60), -18);
+      expect(liveStartIndex(live(4), 30), -3);
+    });
+
+    test('leaves a finished playlist alone', () {
+      expect(liveStartIndex(live(20, ended: true), 30), isNull);
+      expect(liveStartIndex(live(0), 30), isNull);
+    });
+
+    test('finds the variant in a trimmed master', () {
+      const master = '''
+#EXTM3U
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="en",URI="audio.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=6627968,AUDIO="a"
+video.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=836280,AUDIO="a"
+low.m3u8
+''';
+      final trimmed = trimMasterPlaylist(master, 'https://example.test/live/master.m3u8')!;
+      expect(trimmedVariantUri(trimmed), 'https://example.test/live/video.m3u8');
+    });
   });
 
   group('ProgressTracker', () {

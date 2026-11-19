@@ -242,8 +242,8 @@ class AdvancedPage extends StatelessWidget {
             SettingsSelectRow<int>(
               title: 'Read ahead',
               description: 'How much video the player keeps downloaded ahead of '
-                  'what you see. More rides out network hiccups; less uses less '
-                  'memory and bandwidth.',
+                  'what you see. More rides out network hiccups but plays live '
+                  'channels further behind live; less uses less memory.',
               values: PlayerPreferences.bufferSecondsChoices,
               selected: prefs.bufferSeconds,
               label: (s) => withDefault(_seconds(s), s == d.bufferSeconds),

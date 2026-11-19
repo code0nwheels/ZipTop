@@ -141,18 +141,22 @@ abstract class LivePlayer {
 
 /// The playlist at [url] and the URL it ended up at after redirects, which
 /// its relative URIs resolve against. Null when it could not be fetched.
-Future<({String text, String url})?> fetchPlaylist(String url, {required String referer}) async {
-  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+Future<({String text, String url})?> fetchPlaylist(
+  String url, {
+  required String referer,
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final client = HttpClient()..connectionTimeout = timeout;
   try {
     final request = await client.getUrl(Uri.parse(url));
     request.headers.set(HttpHeaders.userAgentHeader, ApiConfig.mediaUserAgent);
     request.headers.set(HttpHeaders.refererHeader, referer);
-    final response = await request.close().timeout(const Duration(seconds: 5));
+    final response = await request.close().timeout(timeout);
     if (response.statusCode != 200) {
       await response.drain<void>();
       return null;
     }
-    final text = await response.transform(utf8.decoder).join().timeout(const Duration(seconds: 5));
+    final text = await response.transform(utf8.decoder).join().timeout(timeout);
     var finalUrl = Uri.parse(url);
     for (final hop in response.redirects) {
       finalUrl = finalUrl.resolveUri(hop.location);
