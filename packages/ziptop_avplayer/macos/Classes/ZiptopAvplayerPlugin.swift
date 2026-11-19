@@ -241,6 +241,11 @@ final class ZipAVPlayer: NSObject, FlutterTexture, FlutterStreamHandler,
     let asset = AVURLAsset(url: url, options: options)
     let item = AVPlayerItem(asset: asset)
     item.preferredForwardBufferDuration = bufferSeconds
+    // A live stream can only buffer up to its live edge, and AVPlayer starts
+    // a few segments from it (recommendedTimeOffsetFromLive), which caps the
+    // buffer there whatever the read ahead is. Starting this far behind live
+    // makes room for it. Ignored for a stream that is not live.
+    item.configuredTimeOffsetFromLive = CMTime(seconds: bufferSeconds, preferredTimescale: 600)
     item.preferredPeakBitRate = peakBitRate
 
     let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
@@ -228,6 +229,46 @@ String? trimMasterPlaylist(String text, String baseUrl, {int? cap}) {
     out.add(absolute(line));
   }
   return '${out.join('\n')}\n';
+}
+
+/// The media playlist URI in [trimmed], a master cut down to one variant by
+/// [trimMasterPlaylist].
+String? trimmedVariantUri(String trimmed) {
+  for (final raw in trimmed.split(RegExp(r'\r?\n'))) {
+    final line = raw.trim();
+    if (line.isNotEmpty && !line.startsWith('#')) return line;
+  }
+  return null;
+}
+
+/// FFmpeg's `live_start_index` for a live HLS [playlist]: how many segments
+/// back from the newest one to start, as a negative index, so that about
+/// [readaheadSeconds] of media can sit in the buffer. Null for a playlist
+/// that is not live.
+///
+/// A live stream's buffer can never run past its newest segment, so it holds
+/// at most what lies between the playhead and the live edge. FFmpeg starts 3
+/// segments back by default (about 9 s on the backend's 3 s segments), which
+/// caps the buffer there whatever the read ahead is. Starting further back
+/// makes room for it, at the cost of playing that much further behind live.
+int? liveStartIndex(HlsMediaPlaylist playlist, int readaheadSeconds) {
+  if (playlist.hasEndList) return null;
+  final segments = playlist.segments;
+  if (segments.isEmpty) return null;
+  // FFmpeg's own default: never start closer to live than this.
+  const fewest = 3;
+  // The oldest segments are about to drop off the server; asking for one
+  // that has gone loses it.
+  const spare = 2;
+  final most = math.max(fewest, segments.length - spare);
+  var count = 0;
+  var seconds = 0.0;
+  for (var i = segments.length - 1; i >= 0 && seconds < readaheadSeconds; i--) {
+    final duration = segments[i].durationSec;
+    seconds += duration > 0 ? duration : playlist.targetDurationSec;
+    count++;
+  }
+  return -count.clamp(fewest, most);
 }
 
 String _afterColon(String line) {
@@ -557,6 +598,7 @@ class MpvPlayer implements LivePlayer {
     _variantsFromTracks = isDashUrl(url);
     _source = _variantsFromTracks ? 'DASH' : 'HLS';
     var source = url;
+    int? startIndex;
     if (!_variantsFromTracks) {
       final master = await fetchPlaylist(url, referer: config.referer);
       if (_disposed || open != _openCount) return;
@@ -565,11 +607,16 @@ class MpvPlayer implements LivePlayer {
         final trimmed = trimMasterPlaylist(master.text, master.url, cap: _bitrateCap);
         if (trimmed != null) source = await _writeTrimmedMaster(trimmed) ?? url;
         if (_disposed || open != _openCount) return;
+        startIndex = await _liveStartIndex(trimmed == null ? master : null, trimmed);
+        if (_disposed || open != _openCount) return;
       }
     }
+    await _setLiveStartIndex(startIndex);
+    if (_disposed || open != _openCount) return;
     unawaited(note(
       'open ${isDashUrl(url) ? 'DASH' : 'HLS'} stream'
-      '${source == url ? '' : ' (one variant, cap ${_bitrateCap ?? 'none'})'}',
+      '${source == url ? '' : ' (one variant, cap ${_bitrateCap ?? 'none'})'}'
+      '${startIndex == null ? '' : ', starting ${-startIndex} segments back'}',
     ));
     await player.open(
       Media(
@@ -588,6 +635,7 @@ class MpvPlayer implements LivePlayer {
     _forgetVariants();
     _variantsFromTracks = false;
     _source = 'File';
+    await _setLiveStartIndex(null);
     final from = start != null && start > Duration.zero ? start : null;
     await player.open(Media(path, start: from));
   }
@@ -639,6 +687,52 @@ class MpvPlayer implements LivePlayer {
       activeBitrate.value = null;
     }
     return ++_openCount;
+  }
+
+  /// Where to start a live HLS stream so the read ahead fits behind its live
+  /// edge (see [liveStartIndex]): from [media], the stream's own media
+  /// playlist, or else the one the [trimmed] master plays. Null to leave
+  /// FFmpeg's default, as for a stream that is not live or a playlist that
+  /// could not be read.
+  Future<int?> _liveStartIndex(
+    ({String text, String url})? media,
+    String? trimmed,
+  ) async {
+    if (media == null) {
+      final variant = trimmed == null ? null : trimmedVariantUri(trimmed);
+      if (variant == null) return null;
+      // Only a better start rides on this, so don't hold the channel up long.
+      media = await fetchPlaylist(
+        variant,
+        referer: config.referer,
+        timeout: const Duration(seconds: 2),
+      );
+    }
+    if (media == null || M3u8Parser.isMaster(media.text)) return null;
+    final readahead = PlayerTuning.of(_preferences, tile: tuning.isTile).readaheadSeconds;
+    return liveStartIndex(M3u8Parser.parseMedia(media.text, media.url), readahead);
+  }
+
+  /// Sets FFmpeg's `live_start_index` for the next stream opened, or
+  /// clears it when [index] is null.
+  Future<void> _setLiveStartIndex(int? index) async {
+    final native = player.platform;
+    if (native is! NativePlayer) return;
+    // demuxer-lavf-o carries media_kit's own FFmpeg options too, so this
+    // edits the one entry rather than setting the whole list.
+    try {
+      await native.command(['change-list', 'demuxer-lavf-o', 'remove', 'live_start_index']);
+    } catch (_) {
+      // Not there to remove.
+    }
+    if (index == null) return;
+    try {
+      await native.command(
+        ['change-list', 'demuxer-lavf-o', 'append', 'live_start_index=$index'],
+      );
+    } catch (_) {
+      // The stream still plays, from FFmpeg's default start.
+    }
   }
 
   /// Writes [playlist] where mpv can open it, or null if it can't be.
